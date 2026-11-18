@@ -792,6 +792,24 @@ def _git(root: Path, home: Path, *args: str) -> str:
     return done.stdout.strip()
 
 
+def _darwin_uname(out: Path) -> None:
+    """Make the build script's `uname` answer Darwin, so a row about the dirty-tree refusal reaches it on any host.
+
+    The script refuses a non-macOS host first, before it runs git. `uname -m` still reports the real machine.
+    """
+    real = shutil.which("uname")
+    assert real, "no uname"
+    shim = out / "shims" / "uname"
+    shim.parent.mkdir(parents=True, exist_ok=True)
+    shim.write_text(
+        "#!/bin/sh\n"
+        'if [ "$#" -eq 0 ] || [ "$1" = "-s" ]; then echo Darwin; exit 0; fi\n'
+        f'exec "{real}" "$@"\n',
+        encoding="utf-8", newline="\n",
+    )
+    shim.chmod(0o755)
+
+
 def _tracked_fixture_install(tmp_path: Path) -> tuple[Path, str]:
     """A fixture install whose every file is committed; returns (root, head_sha)."""
     root = _fixture_install(tmp_path, venv_webview=True)
@@ -809,6 +827,7 @@ def _manifest(app: Path) -> dict:
 
 def test_dirty_tracked_tree_is_refused_without_explicit_override(tmp_path: Path) -> None:
     root, _sha = _tracked_fixture_install(tmp_path)
+    _darwin_uname(tmp_path)
     channel = root / "config" / "release" / "update_channel.json"
     channel.write_text('{"release_version": "9.9.9-dirty"}')
     done = _build(root, tmp_path, pythons=_COMPLETE_PYTHONS)
@@ -821,6 +840,7 @@ def test_dirty_tracked_tree_is_refused_without_explicit_override(tmp_path: Path)
 
 def test_uncommitted_new_files_are_dirty_too(tmp_path: Path) -> None:
     root, _sha = _tracked_fixture_install(tmp_path)
+    _darwin_uname(tmp_path)
     (root / "UNCOMMITTED_SOURCE.py").write_text("X = 1\n")
     done = _build(root, tmp_path, pythons=_COMPLETE_PYTHONS)
     assert done.returncode != 0, "untracked uncommitted source must count as dirty"

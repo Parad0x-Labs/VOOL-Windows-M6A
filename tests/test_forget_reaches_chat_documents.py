@@ -68,6 +68,15 @@ def _stage_bytes_all() -> bytes:
     return b"".join(path.read_bytes() for path in sorted(root.glob("att_*")) if path.is_file())
 
 
+@pytest.fixture
+def windows_gate_on(monkeypatch):
+    """Run with the Windows gate on: these tests pin the Windows forget line redaction (Jesse OK 16 Nov 18:25Z)."""
+    from core import windows_write_gate as gate
+
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+
+
+@pytest.mark.usefixtures("windows_gate_on")
 def test_forget_removes_a_chat_fact_from_the_chats_carried_document(tmp_path, receipts):
     rng = random.Random(8812)
     profile = _profile(tmp_path)
@@ -112,6 +121,7 @@ def test_another_chats_document_keeps_its_own_words(tmp_path, receipts):
     assert value in _carried_text(chat_b, "turn-3", "archive drawer code")
 
 
+@pytest.mark.usefixtures("windows_gate_on")
 def test_a_document_only_value_is_forgotten_and_reported(tmp_path, receipts):
     """The value sits only in the document (never stated as a message): forget still removes it and counts it."""
     rng = random.Random(9902)
@@ -128,6 +138,7 @@ def test_a_document_only_value_is_forgotten_and_reported(tmp_path, receipts):
     assert "Gate opens at seven." in _carried_text(chat, "turn-3", "when does the gate open")
 
 
+@pytest.mark.usefixtures("windows_gate_on")
 def test_an_unreadable_ledger_withholds_carried_documents(tmp_path, monkeypatch):
     rng = random.Random(3307)
     _profile(tmp_path)
@@ -144,6 +155,7 @@ def test_an_unreadable_ledger_withholds_carried_documents(tmp_path, monkeypatch)
     assert "Plain line." not in _carried_text(chat, "turn-2", "plain")
 
 
+@pytest.mark.usefixtures("windows_gate_on")
 def test_verify_fails_closed_when_a_document_cannot_be_read(tmp_path, monkeypatch):
     from core.memory.carriers import verify_forget_stores
 
@@ -165,6 +177,7 @@ def test_verify_fails_closed_when_a_document_cannot_be_read(tmp_path, monkeypatc
     assert erasures["stores"]["chat_documents"]["status"] == "incomplete"
 
 
+@pytest.mark.usefixtures("windows_gate_on")
 def test_re_pasting_forgotten_words_is_refused_in_that_chat_only(tmp_path, receipts):
     rng = random.Random(6120)
     profile = _profile(tmp_path)
@@ -199,6 +212,7 @@ def test_a_subject_forget_withholds_the_documents_window(tmp_path, receipts):
     assert code not in later, later
 
 
+@pytest.mark.usefixtures("windows_gate_on")
 def test_a_file_with_no_readable_owner_fails_verification_only_when_it_carries_the_words(tmp_path):
     from core.memory.carriers import verify_forget_stores
 

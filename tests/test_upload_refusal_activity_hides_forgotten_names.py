@@ -75,6 +75,14 @@ def _forgotten_chat(tmp_path, rng: random.Random, value: str, handle_kind: str) 
     return handle, chat
 
 
+@pytest.fixture
+def windows_gate_on(monkeypatch):
+    """Run with the Windows gate on: these tests pin the Windows forget line redaction (Jesse OK 16 Nov 18:25Z)."""
+    from core import windows_write_gate as gate
+
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+
+
 @pytest.mark.parametrize("handle_kind", ["canonical", "other_handle"])
 @pytest.mark.parametrize("case", CASES, ids=[c[0] for c in CASES])
 def test_a_refusal_never_names_a_file_whose_name_was_forgotten(tmp_path, monkeypatch, case, handle_kind):
@@ -103,6 +111,7 @@ def test_a_refusal_names_the_file_when_its_name_carries_nothing_forgotten(tmp_pa
     assert "garden-notes.txt" in json.dumps(_refused_rows(handle, chat), ensure_ascii=False)
 
 
+@pytest.mark.usefixtures("windows_gate_on")
 def test_an_unreadable_ledger_hides_the_name(tmp_path, monkeypatch):
     import core.memory.revocation as revocation
 

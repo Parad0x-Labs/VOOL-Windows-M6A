@@ -122,6 +122,18 @@ def _market_rule(branch: str, *, datasets: bool = False) -> re.Pattern[str]:
 _FLOW_TOKEN = (r"(?:\$[A-Za-z][A-Za-z0-9]{1,9}\b|\b0x[0-9a-fA-F]{40}\b|\b[1-9A-HJ-NP-Za-km-z]{32,44}\b"
                r"|\b(?:this|that|the|my)\s+(?:token|coin|memecoin)\b)")
 
+#: the assets a chat payment names: every pilot row's native coin, and USDT (the owner's own token transfers)
+_WALLET_COIN = r"(?:lamports?|sol|eth|bnb|usdc|usdt)"
+#: one word of a payee named with no "to" ("send Testy 1 USDT"): never a pronoun or a function word
+_WALLET_PAYEE_WORD = (
+    r"(?!(?:me|us|you|it|them|him|her|myself|ourselves|yourself|for|the|a|an|my|our|your|their|his|its|this|that|"
+    r"these|those|back|out|over|in|on|of|with|from|by|at|about|up|off|away|all|some|only|just|another|more|again)\b)"
+    r"[A-Za-z][\w'.-]*"
+)
+
+#: the no-"to" payee arm reads only a request: never text that opens with a question word or ends with "?"
+_WALLET_NOT_A_QUESTION = r"^(?!\s*(?:did|have|has|was|were|how|why|when)\b)(?![^\n]*\?\s*$)"
+
 _RULES: tuple[tuple[str, str, re.Pattern[str]], ...] = (
     # -- repository operations (RepoOps control plane) ------------------------
     # GitHub-management demands -- pull requests, issues, CI truth, the typed git vertical --
@@ -1131,6 +1143,33 @@ _X_ASK_TO_ACT = re.compile(
 )
 
 
+#: Windows only (0.7.3 carry 6): the wallet.propose rule also counts USDT, the token the owner's own transfers may
+#: send (core.wallet.chains.USER_TRANSFER_TOKENS) and the Crypto page's Send form offers; the wallet itself decides where
+#: USDT can go (Mainnet rows only). A saved name with no "to" ("send Testy 1 USDT", "pay Tomas Berg 0.5 SOL") is a
+#: payee too: one to three words, none of them a pronoun or a function word ("pay for 1 ETH", "send me 1 SOL" name
+#: nobody), right before the exact amount and the coin. That arm never reads a question ("did you send Bob 1 SOL?",
+#: "how do I pay Testy 1 USDT"): asked about, not asked for. Off Windows the rule in _RULES is the one Mac ships.
+_WINDOWS_WALLET_PROPOSE = re.compile(
+    rf"\b(?:pay|send|transfer|prepare|propose)\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b{_WALLET_COIN}\b(?:[^.?!]|\.(?=\d)){{0,60}}?\bto\b"
+    rf"|\b(?:pay|send|transfer)\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b(?:0x[0-9a-f]{{40}}|[1-9A-HJ-NP-Za-km-z]{{32,44}})\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b\d[\d,]*(?:\.\d+)?\s*{_WALLET_COIN}\b"
+    rf"|\b(?:pay|send|transfer)\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b\d[\d,]*(?:\.\d+)?\s*{_WALLET_COIN}\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b(?:0x[0-9a-f]{{40}}|[1-9A-HJ-NP-Za-km-z]{{32,44}})\b"
+    rf"|{_WALLET_NOT_A_QUESTION}[^\n]*?\b(?:pay|send|transfer)\s+{_WALLET_PAYEE_WORD}(?:\s+{_WALLET_PAYEE_WORD}){{0,2}}\s+\d[\d,]*(?:\.\d+)?\s*{_WALLET_COIN}\b",
+    re.I,
+)
+
+
+def _rules() -> tuple[tuple[str, str, re.Pattern[str]], ...]:
+    """_RULES, with the Windows wallet.propose rule in place of the shipped one on Windows."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return _RULES
+    return tuple(
+        (intent, family, _WINDOWS_WALLET_PROPOSE if intent == "wallet.propose" else pattern)
+        for intent, family, pattern in _RULES
+    )
+
+
 def _x_action_asked(cleaned: str) -> bool:
     words = _X_QUOTED.sub(" ", cleaned)
     if not any(p.search(words) for i, _f, p in _RULES if i == "x.action.propose"):
@@ -1162,11 +1201,18 @@ def resolve_demand_signals(text: str) -> DemandSignals:
     if is_explicit_code_repair(cleaned):
         _note("code.task.open", "code")
 
+    from core.vool_browser.live_requests import requested as browser_requested
+
+    if browser_requested(cleaned):
+        _note("vool-browser.session.open", "web")
+        _note("vool-browser.inspect", "web")
+
     database_is_context_only = bool(_DATABASE_CONTEXT_ONLY.search(cleaned))
+    rules = _rules()
     is_wallet_move = any(
-        pattern.search(cleaned) for intent, _family, pattern in _RULES if intent == "wallet.propose"
+        pattern.search(cleaned) for intent, _family, pattern in rules if intent == "wallet.propose"
     )
-    for intent, family, pattern in _RULES:
+    for intent, family, pattern in rules:
         if pattern.search(cleaned):
             if family == "database" and database_is_context_only:
                 # Discussed, not demanded. Recorded here rather than by narrowing the

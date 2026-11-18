@@ -78,6 +78,14 @@ def _refused(*handles: str) -> list[dict]:
     return [row for row in rows if row.get("event_type") == "attachment_refused"]
 
 
+@pytest.fixture
+def windows_gate_on(monkeypatch):
+    """Run with the Windows gate on: these tests pin the Windows forget line redaction (Jesse OK 16 Nov 18:25Z)."""
+    from core import windows_write_gate as gate
+
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+
+
 # --- F1 ----------------------------------------------------------------------------------------------
 
 def test_a_later_rename_never_brings_back_an_earlier_forgotten_word(tmp_path, receipts):
@@ -100,6 +108,7 @@ def test_a_later_rename_never_brings_back_an_earlier_forgotten_word(tmp_path, re
     assert not ca.documents_carrying(chat, "document")
 
 
+@pytest.mark.usefixtures("windows_gate_on")
 def test_the_verifier_catches_a_renamed_name_carrying_an_earlier_forgotten_word(tmp_path, receipts):
     rng = random.Random(9302)
     profile = _profile(tmp_path)
@@ -171,6 +180,7 @@ def test_a_refusal_reason_carrying_a_forgotten_word_is_not_written(tmp_path):
 
 # --- F3 ----------------------------------------------------------------------------------------------
 
+@pytest.mark.usefixtures("windows_gate_on")
 def test_the_serve_screen_never_sends_a_revoked_word_when_every_candidate_is_revoked(tmp_path, monkeypatch):
     import core.memory.revocation as revocation
 
@@ -207,6 +217,7 @@ def test_a_forget_under_a_legacy_handle_covers_an_upload_under_the_canonical_id(
 
 # --- F5 ----------------------------------------------------------------------------------------------
 
+@pytest.mark.usefixtures("windows_gate_on")
 def test_a_refused_name_naming_a_withdrawn_subject_is_not_written(tmp_path, monkeypatch):
     import core.memory.revocation as revocation
 

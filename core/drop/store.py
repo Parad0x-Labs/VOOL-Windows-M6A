@@ -15,6 +15,7 @@ import sqlite3
 import stat
 from pathlib import Path
 
+from core import owner_only
 from core.drop.session import (
     LIMITS,
     PROFILE,
@@ -34,7 +35,38 @@ KIND_LIMITS = {"identity": 1, "prekey": LIMITS["prekeys"], "session": LIMITS["se
                "outbox": LIMITS["queued"], "inbox": LIMITS["queued"], "revoked": 1024}
 
 
+#: owner_only reasons that mean "not a plain local folder or file here" rather than "too open".
+_PATH_REASONS = frozenset({"reparse_point", "kind_mismatch", "non_local_path", "unreadable"})
+#: Seam: on Windows the store folder and files are guarded by core.owner_only ACLs, never by mode bits
+#: (a mode-bit check never counts as a pass there). Tests switch this on to drive the ACL branch.
+_WINDOWS_ACL = os.name == "nt"
+
+
+def _lstat(path):
+    # Seam: tests stand in a junction's stat result here, which no POSIX test host can plant.
+    return os.lstat(path)
+
+
+def _is_link_or_reparse(info) -> bool:
+    # Windows lstat reports a directory junction as S_IFDIR, so the reparse-point attribute is checked too,
+    # independently of whatever core.owner_only does.
+    if stat.S_ISLNK(info.st_mode):
+        return True
+    attributes = getattr(info, "st_file_attributes", None)
+    if attributes is None:
+        # Windows always reports file attributes; their absence there is an unknown state and is refused.
+        return os.name == "nt"
+    return bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+
+
+def _acl_refusal(reason: str) -> str:
+    # Any reason not known to mean "wrong kind of path" is a permissions refusal: unknown fails closed.
+    return "UNSAFE_STORE_PATH" if reason in _PATH_REASONS else "UNSAFE_STORE_PERMISSIONS"
+
+
 def secure_directory(directory) -> Path:
+    if _WINDOWS_ACL:
+        return _secure_directory_acl(Path(directory).absolute())
     demand(os.name == "posix", "UNSUPPORTED_STORE_PLATFORM")
     directory = Path(directory).absolute()
     with contextlib.suppress(FileExistsError):
@@ -45,13 +77,63 @@ def secure_directory(directory) -> Path:
     return directory
 
 
-def secure_file(path: Path, create=False):
+def secure_file(path: Path, create=False, repair=False):
+    if _WINDOWS_ACL:
+        _secure_file_acl(path, create=create, repair=repair)
+        return
     if create:
         with contextlib.suppress(FileExistsError):
             os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600))
     info = path.lstat()
     demand(stat.S_ISREG(info.st_mode) and info.st_nlink == 1, "UNSAFE_STORE_PATH")
     demand(info.st_mode & 0o077 == 0 and info.st_uid == os.getuid(), "UNSAFE_STORE_PERMISSIONS")
+
+
+def _secure_directory_acl(directory: Path) -> Path:
+    # Like Path.mkdir on POSIX: only the named folder is created, never a missing parent.
+    if not directory.parent.is_dir():
+        raise FileNotFoundError(str(directory.parent))
+    try:
+        # Created with the owner-only descriptor at creation; an existing folder is refused here and verified below.
+        owner_only.ensure_private_dir(directory, fresh=True)
+    except owner_only.OwnerOnlyUnavailable as exc:
+        if exc.reason != "already_exists":
+            raise DropError(_acl_refusal(exc.reason)) from exc
+    except (OSError, ValueError) as exc:
+        raise DropError("UNSAFE_STORE_PATH") from exc
+    info = _lstat(directory)
+    # A junction or other reparse point is refused here, before and regardless of the ACL reader.
+    demand(stat.S_ISDIR(info.st_mode) and not _is_link_or_reparse(info), "UNSAFE_STORE_PATH")
+    # An existing folder is verified, never repaired: a handle opened on it earlier would keep its access.
+    try:
+        report = owner_only.verify_owner_only(directory)
+    except (OSError, ValueError) as exc:
+        raise DropError("UNSAFE_STORE_PERMISSIONS") from exc
+    demand(report.ok, _acl_refusal(report.reason))
+    return directory
+
+
+def _secure_file_acl(path: Path, *, create: bool, repair: bool):
+    # repair=True only for a file this process's own SQLite connection has just created; anything that
+    # already existed is verified and refused if too open, never re-permissioned.
+    created = False
+    if create:
+        # O_EXCL (CREATE_NEW) never follows whatever already sits at the name, a link included.
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOINHERIT", 0)
+        try:
+            os.close(os.open(path, flags, 0o600))
+            created = True
+        except FileExistsError:
+            pass
+    info = _lstat(path)
+    # Kind, reparse point and link count are checked before any repair, so a planted link is never re-permissioned.
+    demand(stat.S_ISREG(info.st_mode) and not _is_link_or_reparse(info) and info.st_nlink == 1,
+           "UNSAFE_STORE_PATH")
+    try:
+        report = owner_only.make_owner_only(path) if created or repair else owner_only.verify_owner_only(path)
+    except (OSError, ValueError) as exc:
+        raise DropError("UNSAFE_STORE_PERMISSIONS") from exc
+    demand(report.ok, _acl_refusal(report.reason))
 
 
 class EncryptedStore:
@@ -64,6 +146,14 @@ class EncryptedStore:
         try:
             path = secure_directory(directory) / "drop.sqlite"
             secure_file(path, create=True)
+            preexisting = set()
+            if _WINDOWS_ACL:
+                # A sidecar left by an earlier run is verified before SQLite opens it and is never repaired.
+                for suffix in ("-wal", "-shm"):
+                    sidecar = path.with_name(path.name + suffix)
+                    if os.path.lexists(sidecar):
+                        secure_file(sidecar)
+                        preexisting.add(suffix)
             self._db = sqlite3.connect(path, timeout=5, isolation_level=None)
             self._db.executescript("""
                 PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF;
@@ -78,7 +168,11 @@ class EncryptedStore:
             self.transaction(self._initialize)
             for suffix in ("-wal", "-shm"):
                 sidecar = path.with_name(path.name + suffix)
-                if sidecar.exists():
+                if _WINDOWS_ACL:
+                    if os.path.lexists(sidecar):
+                        # Only a sidecar SQLite just created here is made owner-only; an earlier one is verified again.
+                        secure_file(sidecar, repair=suffix not in preexisting)
+                elif sidecar.exists():
                     os.chmod(sidecar, 0o600)
                     secure_file(sidecar)
         except BaseException:

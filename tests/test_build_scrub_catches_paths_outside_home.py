@@ -25,6 +25,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.platform_helpers import bash_executable, bash_path
+
 REPO = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = REPO / "installer" / "bundle" / "build_macos_app.sh"
 BASE_PATH = "/usr/bin:/bin"
@@ -79,7 +81,7 @@ def _run(section_body: str, body: str, tmp_path: Path, *, extra_env: dict[str, s
     (tmp_path / "builder-home").mkdir(exist_ok=True)
     (tmp_path / "checkout").mkdir(exist_ok=True)
     return subprocess.run(
-        ["bash", "-c", driver], capture_output=True, text=True, env=env, timeout=timeout,
+        [bash_executable(), "-c", driver], capture_output=True, text=True, env=env, timeout=timeout,
         cwd=str(tmp_path),
     )
 
@@ -309,9 +311,13 @@ def test_libpython_install_name_is_rewritten_for_a_non_home_prefix(tmp_path: Pat
 
 
 def test_the_build_script_still_parses_under_macos_bash() -> None:
-    bash = "/bin/bash" if os.path.exists("/bin/bash") else shutil.which("bash")
+    if os.name == "nt":  # Git for Windows' bash; the bare name there is the WSL stub
+        bash = next((path for path in (r"C:\Program Files\Git\bin\bash.exe", r"C:\Program Files\Git\usr\bin\bash.exe")
+                     if os.path.exists(path)), None)
+    else:  # macOS's own /bin/bash (3.2) first: the bash the script must parse under
+        bash = "/bin/bash" if os.path.exists("/bin/bash") else shutil.which("bash")
     assert bash, "no bash"
-    done = subprocess.run([bash, "-n", str(BUILD_SCRIPT)], capture_output=True, text=True)
+    done = subprocess.run([bash, "-n", bash_path(BUILD_SCRIPT)], capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
 
 

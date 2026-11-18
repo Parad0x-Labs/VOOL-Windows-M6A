@@ -52,6 +52,14 @@ def receipts(monkeypatch):
     return seen
 
 
+@pytest.fixture
+def windows_gate_on(monkeypatch):
+    """Run with the Windows gate on: these tests pin the Windows forget line redaction (Jesse OK 16 Nov 18:25Z)."""
+    from core import windows_write_gate as gate
+
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+
+
 # --- W1 ----------------------------------------------------------------------------------------------
 
 def test_a_users_own_name_naming_a_withdrawn_subject_keeps_its_name_in_storage(tmp_path, receipts):
@@ -73,6 +81,7 @@ def test_a_users_own_name_naming_a_withdrawn_subject_keeps_its_name_in_storage(t
     assert ca._read_manifest(after["id"])["name"] == "plan.txt"
 
 
+@pytest.mark.usefixtures("windows_gate_on")
 def test_the_serve_screen_still_hides_a_users_name_naming_a_withdrawn_subject(tmp_path, monkeypatch):
     import core.memory.revocation as revocation
 
@@ -86,6 +95,7 @@ def test_the_serve_screen_still_hides_a_users_name_naming_a_withdrawn_subject(tm
     assert ca._read_manifest(doc["id"])["name"] == "plan.txt"
 
 
+@pytest.mark.usefixtures("windows_gate_on")
 def test_a_forget_written_name_naming_a_withdrawn_subject_is_still_renamed(tmp_path, receipts):
     """N1 stays fixed: the withdrawn-subject clause still applies to names a forget wrote."""
     rng = random.Random(5504)
@@ -124,6 +134,7 @@ def test_the_verifier_flags_a_name_carrying_an_earlier_forgotten_word(tmp_path, 
 
 # --- Nit ---------------------------------------------------------------------------------------------
 
+@pytest.mark.usefixtures("windows_gate_on")
 def test_a_forget_with_no_clean_name_reports_incomplete_before_writing(tmp_path, receipts, monkeypatch):
     rng = random.Random(5506)
     profile = _profile(tmp_path)

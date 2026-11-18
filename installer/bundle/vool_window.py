@@ -738,6 +738,37 @@ _NO_FOLDER_RETURNED = (
 )
 
 
+def _write_window_shown(*_args: object) -> None:
+    """Tell the bundle supervisor this host showed its window: its pid in VOOL_WINDOW_SHOWN_PATH.
+
+    The supervisor starts again a host that is running but never showed its window when VOOL is
+    launched again (bundle_supervisor._recreate_hidden_window). No path set (not under the bundle
+    supervisor): nothing is written."""
+    path = str(os.environ.get("VOOL_WINDOW_SHOWN_PATH") or "").strip()
+    if not path:
+        return
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(f"{os.getpid()}\n")
+    except OSError as exc:
+        _log(f"window shown marker not written ({type(exc).__name__})")
+        return
+    _log("main window shown")
+
+
+def _mark_shown_with(window: object) -> bool:
+    """Write the shown marker when the main window is first shown. True when the hook was installed."""
+    try:
+        window.events.shown += _write_window_shown
+        return True
+    except Exception as exc:
+        # Without the hook a shown window could not be told from a hidden one: say it was shown, so
+        # the supervisor never restarts a window the person may be using.
+        _log(f"main window shown hook unavailable ({exc!r}); marked shown")
+        _write_window_shown()
+        return False
+
+
 def _close_secondaries_with(window: object, api: _WindowApi) -> bool:
     """Close the pet, Settings and Setup windows when the main chat window closes (not macOS).
     True when the hook was installed. See ``_WindowApi._close_secondary_windows``."""
@@ -873,6 +904,42 @@ def _deliver_without_overwrite(body: bytes, destination: Path, prefix: str) -> N
             direct.close()
             destination.unlink(missing_ok=True)
             raise
+
+
+_WINDOWS_RESERVED_NAMES = frozenset({"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
+                                      *(f"LPT{i}" for i in range(1, 10))})
+
+
+def _export_save_name(disposition: str | None, format_name: str, *, answer: bool) -> str:
+    """The name the save dialog offers for a chat export: the server's own file name.
+
+    The server names the export after the chat (``Content-Disposition``, exact UTF-8 name in
+    ``filename*``, ASCII ``filename=`` as fallback), the same name the browser saves under. The
+    name is offered only when it is already a safe file name by the server's own rule
+    (``filename_title`` leaves it unchanged), ends in the format asked for, fits 255 bytes and is
+    not a name Windows reserves; anything else, or no name at all, offers the neutral name.
+    """
+    import re
+    from urllib.parse import unquote
+
+    neutral = ("VOOL answer" if answer else "VOOL chat") + "." + format_name
+    header = str(disposition or "")
+    try:
+        exact = re.search(r"filename\*\s*=\s*UTF-8''([^;\s]+)", header, re.IGNORECASE)
+        if exact:
+            name = unquote(exact.group(1), encoding="utf-8", errors="strict")
+        else:
+            quoted = re.search(r'filename\s*=\s*"([^"\\]*)"', header, re.IGNORECASE)
+            name = quoted.group(1) if quoted else ""
+        from core.web.api.chat_export_api import filename_title
+    except Exception:
+        return neutral
+    suffix = "." + format_name
+    stem = name[: -len(suffix)] if name.endswith(suffix) else ""
+    if (not stem or filename_title(stem, max_bytes=255) != stem or len(name.encode("utf-8")) > 255
+            or stem.split(".")[0].rstrip(" ").upper() in _WINDOWS_RESERVED_NAMES):
+        return neutral
+    return name
 
 
 class _WindowApi:
@@ -1289,6 +1356,8 @@ class _WindowApi:
                 body = response.read(limit + 1)
                 if response.headers.get_content_type() != expected_type or (pdf and not body.startswith(b"%PDF-")):
                     return {"ok": False, "error": "invalid_pdf_response" if pdf else "invalid_export_response"}
+                save_name = _export_save_name(response.headers.get("Content-Disposition"), format_name,
+                                              answer=bool(request_id))
             if len(body) > limit:
                 return {"ok": False, "error": "pdf_too_large" if pdf else "export_too_large",
                         "message": "Export exceeds the native save size limit; no partial file was saved."}
@@ -1296,7 +1365,7 @@ class _WindowApi:
                          "pdf": "PDF documents (*.pdf)"}[format_name]
             result = self._window.create_file_dialog(self._webview.SAVE_DIALOG,
                 directory=_save_dialog_start_folder(),
-                save_filename=("vool-answer" if request_id else "vool-chat") + "." + format_name,
+                save_filename=save_name,
                 file_types=(file_type,))
             if not result:
                 return {"ok": False, "cancelled": True}
@@ -2109,6 +2178,8 @@ def main() -> int:
     # claimed before any window so the taskbar never groups VOOL under pythonw. No-op elsewhere.
     windows_chrome.set_app_user_model_id()
     try:
+        if sys.platform == "win32":   # Windows only (carry 15); Mac and Linux log as Mac ships them
+            _log(f"window host started pid={os.getpid()}")
         if not _single_instance():
             _log("another VOOL window is already open; not opening a second")
             return 0
@@ -2173,6 +2244,8 @@ def main() -> int:
             raise RuntimeError("pywebview returned no native window")
         api.set_window(window, webview)
         _close_secondaries_with(window, api)
+        if sys.platform == "win32":   # only the Windows bundle supervisor reads the shown mark (carry 15)
+            _mark_shown_with(window)
         _register_url_scheme_handler()   # catch vool://auth/<provider>/callback launches (macOS)
         runtime_lost = _start_runtime_watchdog(supervisor, window, done)
         notification_bridge = _start_notification_bridge(window)

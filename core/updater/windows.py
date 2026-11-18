@@ -25,6 +25,7 @@ process still running. Anything else, including a Python the user put elsewhere,
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -549,7 +550,14 @@ def consume_worker_request(home: Path, app_root: Path, *, popen: Callable[..., o
     import re
 
     from core.updater.state import _atomic_write_json, _read_json
-    from core.updater.worker import FROZEN_CODE_TREES, WINDOWS_WORKER_APP_ENV
+    from core.updater.worker import (
+        CLAIM_STARTED,
+        FROZEN_CODE_TREES,
+        WINDOWS_WORKER_APP_ENV,
+        WINDOWS_WORKER_PLAN_SHA256_ENV,
+        claim_transaction,
+        transaction_abandoned,
+    )
 
     home, app_root = Path(home), Path(app_root).resolve()
     request = home / "run" / WORKER_REQUEST_NAME
@@ -581,7 +589,14 @@ def consume_worker_request(home: Path, app_root: Path, *, popen: Callable[..., o
         return refuse(f"{job} holds no prepared plan")
     if any(os.path.lexists(job / name) for name in ("app", "code", "python")):
         return refuse(f"{job} already holds code or an interpreter the supervisor did not copy")
-    plan_data = _read_json(plan)
+    if transaction_abandoned(job):
+        return refuse("the app already gave up on this transaction")
+    # Hash and parse the same bytes: the worker refuses any other plan (worker.check_plan_digest).
+    try:
+        plan_bytes = plan.read_bytes()
+        plan_data = json.loads(plan_bytes.decode("utf-8"))
+    except (OSError, ValueError):
+        return refuse(f"{plan} is not a readable plan")
     feed = plan_data.get("feed") if isinstance(plan_data, dict) else None
     if (not isinstance(feed, dict) or plan_data.get("txid") != txid
             or not str(plan_data.get("platform") or "").startswith("windows-")
@@ -601,6 +616,15 @@ def consume_worker_request(home: Path, app_root: Path, *, popen: Callable[..., o
                    if key not in _SCRUBBED_ENV and key != "VOOL_UPDATE_TRUSTED_KEYS_JSON"}
     environment.update(PYTHONPATH=str(code), PYTHONDONTWRITEBYTECODE="1", VOOL_HOME=str(home))
     environment[WINDOWS_WORKER_APP_ENV] = str(app_root)
+    environment[WINDOWS_WORKER_PLAN_SHA256_ENV] = hashlib.sha256(plan_bytes).hexdigest()
+    # The API may have stopped waiting during the slow copy above. The exclusive start claim decides:
+    # the worker starts only when this side created it, so it never runs after the API gave up.
+    try:
+        started = claim_transaction(job, CLAIM_STARTED, txid)
+    except OSError as exc:
+        return refuse(f"the start of this transaction could not be recorded ({exc})")
+    if not started:
+        return refuse("the app gave up on this transaction while its interpreter was copied")
     with (job / "worker.log").open("ab") as output:
         process = (popen or subprocess.Popen)(
             [str(runtime / "pythonw.exe"), "-m", "core.updater.worker", str(plan)], cwd=str(code),

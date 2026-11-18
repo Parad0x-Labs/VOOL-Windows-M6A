@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from core import project_store, runtime_paths
+from core import project_store, runtime_paths, windows_write_gate
 from core.runtime_execution_tools import execute_runtime_tool
 
 
@@ -21,6 +21,13 @@ def _isolated_home(tmp_path, monkeypatch):
     runtime_paths.configure_runtime_home(tmp_path / "home")
     yield
     runtime_paths.configure_runtime_home(None)
+
+
+@pytest.fixture(autouse=True)
+def _windows(monkeypatch):
+    # This is a Windows fix (Windows-only by default, 16 Nov); off Windows the answer is Mac's,
+    # pinned in tests/test_workspace_identity_mac_wording_off_windows.py.
+    monkeypatch.setattr(windows_write_gate, "_IS_WINDOWS", True)
 
 
 def _identity(workspace, **context) -> str:

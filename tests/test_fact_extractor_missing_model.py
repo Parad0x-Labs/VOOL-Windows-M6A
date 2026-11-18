@@ -107,8 +107,10 @@ def test_the_runtime_still_builds_the_extractor_with_its_default_model() -> None
     assert FactExtractor(memory=_Memory())._model == "qwen3:0.6b"
 
 
-def test_off_windows_the_extractor_posts_as_before(world) -> None:
+def test_off_windows_the_extractor_posts_as_before(world, monkeypatch) -> None:
     world["windows"] = False
+    # Off Windows the extractor probes its endpoint first (Mac 0.7.3); stub that probe as answering.
+    monkeypatch.setattr(FactExtractor, "_local_endpoint_answers", lambda self: True)
     world["status"] = 404
     assert _extractor()._call_model("user: hello") == ""
     assert _extractor()._call_model("user: hello") == ""

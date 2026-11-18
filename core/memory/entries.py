@@ -1007,11 +1007,12 @@ def _one_listing():
     if _ONE_LISTING.get() is not None:
         yield
         return
+    from core.context_namespace import _schema_once
     from core.finalization import availability_read_scope
 
     token = _ONE_LISTING.set(_Listing())
     try:
-        with availability_read_scope():
+        with availability_read_scope(), _schema_once():
             yield
     finally:
         _ONE_LISTING.reset(token)

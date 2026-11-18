@@ -1449,6 +1449,92 @@ def _strip_unbacked_file_change_promises(
     return guarded
 
 
+#: 0.7.2 hardware check (Steve, 14 Nov): "trades for BONK" seated no tool, the model answered "Let me pull
+#: the data 🚀", and the turn ended Done with nothing run, signed `no_action_claimed`. A reply that ENDS on
+#: a promise of work about to happen (pull, fetch, check, look up, "one moment while I ...") on a turn
+#: where no tool ran leaves the user waiting for a result that never comes. Only the trailing promise is
+#: judged, so "Let me check: ..." followed by an answer stays. An offer stays: a question ("Want me to
+#: fetch it?"), "if you ...", "ask again and I'll fetch ...", and a plan for a later step. "Let me know"
+#: is not a promise of work. All hosts.
+_WORK_PROMISE_RE = re.compile(
+    r"\b(?:let\s+me|i['’]?ll|i\s+will|i['’]?m\s+going\s+to|i\s+am\s+going\s+to)\s+"
+    r"(?:(?:now|just|quickly|first)\s+)*(?:go\s+ahead\s+and\s+)?"
+    r"(?:pull|fetch|grab|get|gather|collect|check|look\s+(?:up|into)|search|find|retrieve|query|"
+    r"dig\s+(?:up|into)|track\s+down)\b"
+    r"|\bone\s+moment\s+while\s+i\b"
+    r"|\bgive\s+me\s+a\s+(?:moment|sec(?:ond)?|minute)\b",
+    re.IGNORECASE,
+)
+#: "Ask again and I'll fetch the real data first", "Name the cities you want and I'll fetch ...": the
+#: work waits for the user's next step.
+_AFTER_YOU_OFFER_RE = re.compile(r"\band\s+(?:i['’]?ll|i\s+will)\b", re.IGNORECASE)
+_WORK_PROMISE_SPLIT_RE = re.compile(r"((?<=[.!?:])\s+|\n+)")
+_UNBACKED_WORK_PROMISE_NOTE = "(Nothing ran on this turn: no tool was called.)"
+
+
+def _is_trailing_work_promise(sentence: str) -> bool:
+    text = sentence.strip()
+    return bool(
+        _WORK_PROMISE_RE.search(text)
+        and not text.rstrip(" \t*_)\"'”’").endswith("?")
+        and not _CONDITIONAL_OFFER_RE.search(text)
+        and not _AFTER_YOU_OFFER_RE.search(text)
+        and not _DEFERRED_PLAN_RE.search(text)
+    )
+
+
+def _strip_unbacked_work_promises(
+    output: dict[str, Any],
+    *,
+    session_id: str | None,
+    source_context: dict[str, object] | None,
+) -> dict[str, Any]:
+    """Drop a closing promise of work ("Let me pull the data") that no tool on this turn is doing, and say so.
+
+    Only on Windows (`windows_write_gate`): off Windows the reply is left as Mac ships it.
+    """
+    from core import windows_write_gate
+
+    response = str(output.get("response") or "")
+    if not windows_write_gate.active() or not response.strip() or not _WORK_PROMISE_RE.search(response):
+        return output
+    if (output.get("action_honesty_validator") or {}).get("applied"):
+        return output
+    if output.get("deterministic") or output.get("response_control"):
+        return output
+    if str(output.get("mode") or output.get("mode_override") or "").strip().lower() == "tool_executed":
+        return output
+    parts = _WORK_PROMISE_SPLIT_RE.split(response.strip())  # sentence, separator, sentence, ...
+    removed: list[str] = []
+    while parts:
+        last = parts[-1]
+        if re.search(r"\w", last) and not _is_trailing_work_promise(last):
+            break
+        if re.search(r"\w", last):
+            removed.append(last.strip())
+        parts.pop()  # the promise, or an emoji or punctuation left after it
+        if parts and not parts[-1].strip():
+            parts.pop()  # the separator before it
+    if not removed:
+        return output
+    if _turn_ran_any_tool(session_id=session_id, source_context=source_context):
+        return output
+    body = "".join(parts).strip()
+    guarded = dict(output)
+    # A lead-in with no content of its own ("Sure!", "On it.") is not an answer.
+    if len(re.findall(r"\w+", body)) >= 4:
+        guarded["response"] = f"{body}\n\n{_UNBACKED_WORK_PROMISE_NOTE}"
+    else:
+        guarded["response"] = _HONEST_NO_ACTIVE_TASK_RESPONSE
+    guarded["action_honesty_validator"] = {
+        "applied": True,
+        "reason": "unbacked_work_promise_removed",
+        "removed": list(reversed(removed))[:4],
+        "original_response_excerpt": response[:240],
+    }
+    return guarded
+
+
 def _turn_executed_a_spend(*, session_id: str | None, source_context: dict[str, object] | None) -> bool:
     """Whether this turn's execution record shows a wallet-spend lane actually ran.
 
@@ -1905,6 +1991,61 @@ def _suppress_leaked_tool_call(output: dict[str, Any]) -> dict[str, Any]:
     return guarded
 
 
+# The permission controller's own approval sentence (core.mode_permission_policy: "<Mode> mode requires
+# approval for this exact action.") and the card text built around it (core.authorized_tool_execution).
+# Only the runtime may say it, and only while a card stands behind it. Seen on Steve (14 Nov, session
+# openclaw:de83184b2bbc1085fb0f): asked "send Testy 1 USDT" with no tool seated, the model copied an
+# earlier card's sentence, so the reply announced an approval that did not exist.
+_RUNTIME_APPROVAL_SENTENCE_RE = re.compile(
+    r"\b(?:Manual|Review\s+edits|Plan|Auto|Bypass\s+permissions)\s+mode\s+requires\s+approval\s+for\s+this\s+exact\s+action\b",
+    re.IGNORECASE,
+)
+_RUNTIME_APPROVAL_TEXT_RE = re.compile(
+    r"`[^`\n]{1,80}`\s+needs\s+your\s+approval\s+before\s+it\s+runs\.[ \t]*"
+    r"|\b(?:Manual|Review\s+edits|Plan|Auto|Bypass\s+permissions)\s+mode\s+requires\s+approval\s+for\s+this\s+exact\s+action\b(?:\.{1,3}|\u2026)?[ \t]*"
+    r"|\bReview\s+the\s+details,\s+then\s+allow\s+or\s+deny\s+this\s+request\.[ \t]*",
+    re.IGNORECASE,
+)
+_HONEST_NO_PENDING_APPROVAL_RESPONSE = "Nothing from this turn is waiting for your approval."
+
+
+def _strip_runtime_approval_text_without_a_card(
+    output: dict[str, Any], *, session_id: str | None
+) -> dict[str, Any]:
+    """Take the runtime's approval sentence out of a reply that no pending approval stands behind.
+
+    The sentence belongs to the approval card. A turn that raised a card carries its
+    ``approval_request``, and the chat's pending approval is in the one approval store; either
+    keeps the reply as it is. Otherwise the copied sentences are removed, and a reply left
+    with nothing says plainly that nothing is waiting for approval. Only on Windows
+    (`windows_write_gate`): off Windows the reply is left as Mac ships it.
+    """
+    from core import windows_write_gate
+
+    response = str(output.get("response") or "")
+    if not windows_write_gate.active() or not _RUNTIME_APPROVAL_SENTENCE_RE.search(response):
+        return output
+    if output.get("approval_request"):
+        return output
+    try:
+        from core.mode_permission_policy import session_has_pending_approval
+
+        if session_has_pending_approval(str(session_id or "")):
+            return output
+    except Exception:
+        return output  # the store could not be read: leave the reply as the turn produced it
+    remaining = _RUNTIME_APPROVAL_TEXT_RE.sub("", response)
+    remaining = re.sub(r"[ \t]+\n", "\n", remaining).strip()
+    guarded = dict(output)
+    guarded["response"] = remaining if re.search(r"\w", remaining) else _HONEST_NO_PENDING_APPROVAL_RESPONSE
+    guarded["action_honesty_validator"] = {
+        "applied": True,
+        "reason": "runtime_approval_text_without_pending_approval",
+        "original_response_excerpt": response[:240],
+    }
+    return guarded
+
+
 def _apply_answer_binding(
     output: dict[str, Any],
     *,
@@ -2173,6 +2314,7 @@ def enforce_final_action_honesty(
     output = _enforce_active_mission_forbidden_terms(output, session_id=session_id)
     output = _enforce_user_rule_words(output, session_id=session_id, source_context=source_context)
     output = _suppress_leaked_tool_call(output)
+    output = _strip_runtime_approval_text_without_a_card(output, session_id=session_id)
     output = _enforce_inspection_claims(output, user_input=user_input, session_id=session_id)
     output = _apply_answer_binding(output, user_input=user_input, session_id=session_id)
     # Before the claim-shaped guards below, because those read `output["response"]` and must judge
@@ -2205,7 +2347,8 @@ def enforce_final_action_honesty(
         return output
     if not claim_kind:
         output = _strip_unbacked_file_change_promises(output, session_id=session_id, source_context=source_context)
-        return _strip_unbacked_file_promises(output, session_id=session_id, source_context=source_context)
+        output = _strip_unbacked_file_promises(output, session_id=session_id, source_context=source_context)
+        return _strip_unbacked_work_promises(output, session_id=session_id, source_context=source_context)
     # NOT gated on this turn's prompt. Whether "the files were deleted" is TRUE depends on whether a
     # tool actually ran -- not on what the user happened to type. The old gate required an action
     # verb in the CURRENT prompt, so the guard switched itself off on every follow-up: the identical

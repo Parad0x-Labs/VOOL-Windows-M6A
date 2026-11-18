@@ -411,7 +411,15 @@ class FactExtractor:
     def _call_model(self, conversation: str) -> str:
         if self._model_client is not None:
             return str(self._model_client(conversation) or "")
-        if _skip_missing_model_on_this_host() and not _extractor_model_installed(self._ollama_url, self._model):
+        if _skip_missing_model_on_this_host():
+            # Windows: the inventory read of THIS endpoint answers both questions at once (a dead
+            # endpoint lists nothing), so it replaces the separate endpoint probe and is cached.
+            usable = _extractor_model_installed(self._ollama_url, self._model)
+        else:
+            usable = self._local_endpoint_answers()
+        if not usable:
+            # Nothing local runs here: posting would only reach a dead port on every turn. The
+            # deterministic self-disclosed facts are extracted without the model.
             return ""
         payload = {
             "model": self._model,
@@ -467,6 +475,21 @@ class FactExtractor:
         except Exception:
             return ""
         return str(dict(data.get("message") or {}).get("content") or "")
+
+    def _local_endpoint_answers(self) -> bool:
+        """Whether this extractor's Ollama endpoint can run a model now. An explicitly different
+        endpoint is the caller's choice and is tried as before."""
+        try:
+            from core.local_model_presence import _ollama_has_chat_model
+            from core.ollama_endpoint import ollama_base_url
+
+            if self._ollama_url != str(ollama_base_url()).rstrip("/"):
+                return True
+            # Probe this endpoint itself: another local lane answering (an LM Studio server, say)
+            # does not make the runtime's Ollama answer.
+            return _ollama_has_chat_model(self._ollama_url)
+        except Exception:
+            return False
 
     def _parse_facts(self, raw: str) -> list[ExtractedFact]:
         payload = _extract_json_object(raw)
