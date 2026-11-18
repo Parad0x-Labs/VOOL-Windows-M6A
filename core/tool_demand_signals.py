@@ -134,13 +134,13 @@ _WALLET_PAYEE_WORD = (
 #: the no-"to" payee arm reads only a request: never text that opens with a question word or ends with "?"
 _WALLET_NOT_A_QUESTION = r"^(?!\s*(?:did|have|has|was|were|how|why|when)\b)(?![^\n]*\?\s*$)"
 #: the older "to" arm (Windows, 0.7.4) reads no question about a past or possible payment: text that opens with
-#: "did"; with "was"/"were" and a subject ("was it...", "were we..."); with "have"/"has" and who sent ("have I paid...", "has Tomas sent..."); or with
+#: "did"; with "was"/"were" and a subject ("was it...", "were we..."); with "have"/"has", who, and a past send ("have I paid...", "has Tomas sent..."); or with
 #: "how"/"why"/"when" and a question verb ("how do I send...", "when will you send..."). Every request still reads,
 #: also one put as a question ("can you send 1 SOL to Bob?") or opening with a clause ("When you can, send...").
 _WALLET_NOT_ASKED_ABOUT = (
     r"^(?!\s*did\b)"
     r"(?!\s*(?:was|were)\s+(?:i|you|we|they|he|she|it|that|this|there|the)\b)"
-    r"(?!\s*(?:have|has)\s+(?:i|you|we|they|he|she|it|anyone|someone|\w+\s+(?:already\s+)?(?:sent|paid|transferred))\b)"
+    r"(?!\s*(?:have|has)\s+[\w'-]+\s+(?:already\s+|ever\s+|actually\s+)?(?:sent|paid|transferred)\b)"
     r"(?!\s*(?:how|why|when)\s+(?:do|does|did|will|would|can|could|should|is|are|was|were|has|have|had|to|much|many|long|often)\b)"
 )
 
