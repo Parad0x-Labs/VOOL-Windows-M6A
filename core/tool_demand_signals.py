@@ -133,6 +133,9 @@ _WALLET_PAYEE_WORD = (
 
 #: the no-"to" payee arm reads only a request: never text that opens with a question word or ends with "?"
 _WALLET_NOT_A_QUESTION = r"^(?!\s*(?:did|have|has|was|were|how|why|when)\b)(?![^\n]*\?\s*$)"
+#: the older "to" arm (Windows, 0.7.4) reads no text that opens with a question word: "did you send 1 SOL to
+#: Bob?" asks about a payment. A request put as a question ("can you send 1 SOL to Bob?") is still a request.
+_WALLET_NOT_ASKED_ABOUT = r"^(?!\s*(?:did|have|has|was|were|how|why|when)\b)"
 
 _RULES: tuple[tuple[str, str, re.Pattern[str]], ...] = (
     # -- repository operations (RepoOps control plane) ------------------------
@@ -1148,9 +1151,10 @@ _X_ASK_TO_ACT = re.compile(
 #: USDT can go (Mainnet rows only). A saved name with no "to" ("send Testy 1 USDT", "pay Tomas Berg 0.5 SOL") is a
 #: payee too: one to three words, none of them a pronoun or a function word ("pay for 1 ETH", "send me 1 SOL" name
 #: nobody), right before the exact amount and the coin. That arm never reads a question ("did you send Bob 1 SOL?",
-#: "how do I pay Testy 1 USDT"): asked about, not asked for. Off Windows the rule in _RULES is the one Mac ships.
+#: "how do I pay Testy 1 USDT"): asked about, not asked for. The "to" arm never reads text that opens with a
+#: question word ("did you send 1 SOL to Bob?"). Off Windows the rule in _RULES is the one Mac ships.
 _WINDOWS_WALLET_PROPOSE = re.compile(
-    rf"\b(?:pay|send|transfer|prepare|propose)\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b{_WALLET_COIN}\b(?:[^.?!]|\.(?=\d)){{0,60}}?\bto\b"
+    rf"{_WALLET_NOT_ASKED_ABOUT}[^\n]*?\b(?:pay|send|transfer|prepare|propose)\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b{_WALLET_COIN}\b(?:[^.?!]|\.(?=\d)){{0,60}}?\bto\b"
     rf"|\b(?:pay|send|transfer)\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b(?:0x[0-9a-f]{{40}}|[1-9A-HJ-NP-Za-km-z]{{32,44}})\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b\d[\d,]*(?:\.\d+)?\s*{_WALLET_COIN}\b"
     rf"|\b(?:pay|send|transfer)\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b\d[\d,]*(?:\.\d+)?\s*{_WALLET_COIN}\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b(?:0x[0-9a-f]{{40}}|[1-9A-HJ-NP-Za-km-z]{{32,44}})\b"
     rf"|{_WALLET_NOT_A_QUESTION}[^\n]*?\b(?:pay|send|transfer)\s+{_WALLET_PAYEE_WORD}(?:\s+{_WALLET_PAYEE_WORD}){{0,2}}\s+\d[\d,]*(?:\.\d+)?\s*{_WALLET_COIN}\b",
