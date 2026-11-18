@@ -157,10 +157,23 @@ def _ledger_files(sid: str) -> list[Path]:
 
         root = _ledger_dir()
         if root.is_dir():
-            for kind in [path.name for path in root.iterdir() if path.is_dir()]:
+            # Windows: a kind folder that is a junction or a link is never walked, so a planted
+            # link cannot point a delete at a digest-named file outside the ledger folder.
+            linked = _is_reparse_point if _windows_host() else (lambda _path: False)
+            for kind in [path.name for path in root.iterdir() if path.is_dir() and not linked(path)]:
                 ledger = ledger_path(kind, sid)
                 files += [ledger, ledger.with_suffix(".head.json"), ledger.with_suffix(".tmp")]
     return files
+
+
+def _is_reparse_point(path: Path) -> bool:
+    """A junction, a symbolic link or any other reparse point. Unknown answers True."""
+    try:
+        if path.is_symlink() or getattr(path, "is_junction", lambda: False)():
+            return True
+        return bool(getattr(path.lstat(), "st_file_attributes", 0) & 0x400)  # FILE_ATTRIBUTE_REPARSE_POINT
+    except OSError:
+        return True
 
 
 def _checkpoint(conn: sqlite3.Connection, *, attempts: int = 20) -> bool:
