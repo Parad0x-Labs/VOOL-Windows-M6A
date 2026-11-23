@@ -111,10 +111,13 @@ def test_snapshot_and_restore_past_max_path_spell_every_call_extended_on_windows
 
     # The Windows branch runs on this host: record what it is handed, and hand the host its own spelling back.
     seen: list[str] = []
+    # On a real Windows host the plain spelling past MAX_PATH cannot be opened (WinError 3 or 206 with
+    # LongPathsEnabled=0), so there the recorder still records each path but hands back the real spelling.
+    real_extended_length = snapshot._extended_length
 
     def recording(text):
         seen.append(text)
-        return text
+        return real_extended_length(text) if os.name == "nt" else text
 
     monkeypatch.setattr(snapshot, "_IS_WINDOWS", True)
     monkeypatch.setattr(snapshot, "_extended_length", recording)
@@ -386,11 +389,16 @@ def _transaction(layout) -> Path:
 
 
 def _snapshot_naming(source: Path, relative: str, kind: str = "sqlite") -> None:
+    # Planted through the extended-length spelling on Windows: past MAX_PATH with LongPathsEnabled=0 the
+    # plain spelling cannot be created (WinError 206). Elsewhere the paths are used as written.
+    def spelled(path: Path) -> Path:
+        return Path(snapshot._extended_length(str(path))) if os.name == "nt" else path
+
     saved = source / relative
-    saved.parent.mkdir(parents=True, exist_ok=True)
-    saved.write_bytes(b"from the snapshot\n")
-    (source / "index.json").write_text(json.dumps([{"path": relative, "kind": kind, "present": True}]),
-                                       encoding="utf-8")
+    spelled(saved.parent).mkdir(parents=True, exist_ok=True)
+    spelled(saved).write_bytes(b"from the snapshot\n")
+    spelled(source / "index.json").write_text(json.dumps([{"path": relative, "kind": kind, "present": True}]),
+                                              encoding="utf-8")
 
 
 def test_runtime_snapshot_and_restore_past_max_path_on_this_host(tmp_path):
