@@ -1,6 +1,7 @@
 """Windows: a request for Apple Calendar, the Skill Codex or VOOL Drop gets a fixed answer, with no model call.
 
-None of the three runs on Windows in 0.7.2. Apple Calendar is EventKit, which needs macOS (Settings and
+None of the three runs on Windows in 0.7.2. Since 0.7.3 Drop runs on Windows from its own command line,
+never from chat, so its answer says that instead. Apple Calendar is EventKit, which needs macOS (Settings and
 core/operator/calendar_accounts.py already refuse it there). The Skill Codex's signer runs on a Mac, and VOOL
 Drop refuses on Windows before it touches anything (core/drop require_enabled). In chat, though, the model
 had no tool for them and answered in prose. Measured on Steve, 14 Nov 2026 (0.7.2 at 0360e41e): "connect my
@@ -29,8 +30,12 @@ WINDOWS_SKILL_CODEX_ANSWER = (
     "The Skill Codex isn't available on Windows in this release, so nothing was opened or installed. "
     "VOOL's built-in skills still work here."
 )
+# Drop runs on Windows since 0.7.3 (core/drop/service.py, owner-only ACLs, marked folders only), but only
+# from its own controller command line (python -m core.drop) with VOOL_DROP=1: no chat tool reaches it on
+# any OS. So the chat answer says that, instead of the 0.7.2 "isn't available on Windows", which the
+# 0.7.3 note contradicts (Steve row 10, 23 Nov 2026).
 WINDOWS_DROP_ANSWER = (
-    "VOOL Drop isn't available on Windows in this release, so nothing was sent or received."
+    "VOOL Drop doesn't run from chat. It's an off-by-default command-line preview, so nothing was sent or received."
 )
 
 _VERBS = (
@@ -39,9 +44,15 @@ _VERBS = (
 )
 
 
+# Within one sentence. A `.` ends it only before a space or the end, so a file or path typed between
+# the verb and the subject ("send the file C:\\...\\drop-test.txt to my phone with VOOL Drop") does
+# not split the sentence (Steve row 10, 23 Nov 2026).
+_SAME_SENTENCE = r"(?:[^\n.!?]|\.(?=\S))*"
+
+
 def _request(subject: str) -> re.Pattern[str]:
     return re.compile(
-        rf"\b(?:{_VERBS})\b[^\n.!?]*{subject}|{subject}[^\n.!?]*\b(?:{_VERBS})\b",
+        rf"\b(?:{_VERBS})\b{_SAME_SENTENCE}{subject}|{subject}{_SAME_SENTENCE}\b(?:{_VERBS})\b",
         re.IGNORECASE,
     )
 
