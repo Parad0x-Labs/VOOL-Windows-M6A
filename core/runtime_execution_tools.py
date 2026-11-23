@@ -12,6 +12,8 @@ import platform
 import re
 import shlex
 import subprocess
+import threading
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -2723,6 +2725,63 @@ def _wallet_balances(source_context: dict[str, Any] | None) -> dict[str, Any]:
     return {"lines": lines, "balances": public, "read": len(held) + len(empty), "unavailable": len(unknown)}
 
 
+#: Windows: the addresses a "which one?" answer offered, per turn, so the model can't answer that question itself.
+#: Steve row 38 (0.7.3 at 8987cac7, 23 Nov 2026): two saved contacts matched "Testy"; wallet.propose asked which one
+#: twice, then the model called it again with one contact's raw address and chain=solana, and a proposal was drafted
+#: for a recipient nobody chose. The person's answer comes on a later turn, which this never blocks.
+_RECIPIENT_QUESTIONS: dict[str, tuple[float, frozenset[str], str]] = {}
+_RECIPIENT_QUESTION_TTL_SECONDS = 600.0
+_RECIPIENT_QUESTIONS_LOCK = threading.Lock()
+
+
+def _recipient_question_key(context: dict[str, Any] | None) -> str:
+    from core import windows_write_gate
+    from core.faults.recorder import identity_from_context
+
+    if not windows_write_gate.active():
+        return ""
+    try:
+        turn, session = identity_from_context(context)
+    except Exception:
+        return ""
+    return f"{session}\x1f{turn}" if turn else ""
+
+
+def _recipient_value(value: Any) -> str:
+    text = str(value or "").strip()
+    return text.lower() if text.lower().startswith("0x") else text
+
+
+def _remember_recipient_question(resolution: dict[str, Any], message: str, context: dict[str, Any] | None) -> None:
+    key = _recipient_question_key(context)
+    if not key:
+        return
+    values: set[str] = set()
+    for choice in resolution.get("choices") or ():
+        for endpoint in [choice, *(choice.get("endpoints") or ())]:
+            if isinstance(endpoint, dict) and _recipient_value(endpoint.get("value")):
+                values.add(_recipient_value(endpoint.get("value")))
+    if not values:
+        return
+    now = time.monotonic()
+    with _RECIPIENT_QUESTIONS_LOCK:
+        for stale in [k for k, (until, _v, _m) in _RECIPIENT_QUESTIONS.items() if until <= now]:
+            del _RECIPIENT_QUESTIONS[stale]
+        _RECIPIENT_QUESTIONS[key] = (now + _RECIPIENT_QUESTION_TTL_SECONDS, frozenset(values), message)
+
+
+def _asked_recipient_question(destination: str, context: dict[str, Any] | None) -> str:
+    """On Windows, the question this turn already asked when `destination` is one of the addresses it offered; "" otherwise."""
+    key = _recipient_question_key(context)
+    if not key:
+        return ""
+    with _RECIPIENT_QUESTIONS_LOCK:
+        held = _RECIPIENT_QUESTIONS.get(key)
+    if held is None or held[0] <= time.monotonic():
+        return ""
+    return held[2] if _recipient_value(destination) in held[1] else ""
+
+
 def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: dict[str, Any] | None) -> RuntimeExecutionResult:
     """The model-facing wallet surface: status, propose, simulate, payment_status.
 
@@ -2776,6 +2835,13 @@ def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: d
             # Nothing is proposed for a guessed payee, and a saved address is only ever used on the network it was saved for.
             # Windows (0.7.3): "mainnet"/"testnet"/"devnet" name no chain or network, and an address given directly
             # says its own family; a chain guessed from "mainnet" for it is dropped, a contradicting one is refused.
+            asked = _asked_recipient_question(str(args.get("destination") or ""), context)
+            if asked:
+                return RuntimeExecutionResult(
+                    handled=True, ok=True, status="recipient_ambiguous",
+                    response_text=f"{asked} I asked which one you mean, so I won't pick one of their addresses myself. Nothing was proposed, signed or sent.",
+                    details={"observation": _tool_observation(intent=intent, tool_surface="wallet", ok=True, status="recipient_ambiguous")},
+                )
             fitted = transfers.explicit_address_hints(str(args.get("destination") or ""), chain=str(args.get("chain") or ""),
                                                       network=str(args.get("network") or ""))
             if fitted.refusal:
@@ -2817,6 +2883,8 @@ def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: d
                 question = recipient_outcome.status in {
                     "recipient_ambiguous", "recipient_not_found", "recipient_has_no_address",
                 }
+                if recipient_outcome.status == "recipient_ambiguous":
+                    _remember_recipient_question(resolution, str(recipient_outcome.message or ""), context)
                 return RuntimeExecutionResult(
                     handled=True, ok=question, status=recipient_outcome.status,
                     response_text=f"{recipient_outcome.message} Nothing was proposed, signed or sent.",
