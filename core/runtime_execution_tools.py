@@ -2759,8 +2759,16 @@ def _remember_recipient_question(resolution: dict[str, Any], message: str, conte
     values: set[str] = set()
     for choice in resolution.get("choices") or ():
         for endpoint in [choice, *(choice.get("endpoints") or ())]:
-            if isinstance(endpoint, dict) and _recipient_value(endpoint.get("value")):
-                values.add(_recipient_value(endpoint.get("value")))
+            if not isinstance(endpoint, dict):
+                continue
+            # every form the resolver takes for one of them: the address, the ct-/ep- ids, and the contact's name
+            # (alone or as "Name (label)", compared case-folded)
+            for key_name in ("value", "choose_with", "contact_id", "endpoint_id"):
+                if _recipient_value(endpoint.get(key_name)):
+                    values.add(_recipient_value(endpoint.get(key_name)))
+            name = str(endpoint.get("display_name") or "").strip().casefold()
+            if name:
+                values.add(f"name:{name}")
     if not values:
         return
     now = time.monotonic()
@@ -2779,7 +2787,10 @@ def _asked_recipient_question(destination: str, context: dict[str, Any] | None) 
         held = _RECIPIENT_QUESTIONS.get(key)
     if held is None or held[0] <= time.monotonic():
         return ""
-    return held[2] if _recipient_value(destination) in held[1] else ""
+    text = str(destination or "").strip()
+    named = text.casefold().split(" (", 1)[0].strip()
+    offered = _recipient_value(text) in held[1] or f"name:{named}" in held[1]
+    return held[2] if offered else ""
 
 
 def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: dict[str, Any] | None) -> RuntimeExecutionResult:
