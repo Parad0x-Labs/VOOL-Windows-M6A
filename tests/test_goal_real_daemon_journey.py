@@ -308,9 +308,15 @@ def journey(tmp_path_factory):
 @pytest.fixture(autouse=True)
 def fresh_workspace(journey):
     import shutil
+    # Emptied in place, not removed and made again: on Windows the daemon's broker holds this marked
+    # folder open without delete sharing while it runs (docs/WINDOWS_BROKER.md section 4), so the
+    # folder itself cannot be deleted, and the broker refers to it by that handle, not by its path.
     workspace = journey["workspace"]
-    shutil.rmtree(workspace)
-    workspace.mkdir()
+    for child in list(workspace.iterdir()):
+        if child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
     journey["provider"].reset()
 
 

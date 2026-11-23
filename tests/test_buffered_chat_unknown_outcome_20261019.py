@@ -42,9 +42,20 @@ def _write_then_lose_the_ack(target, content, *args, **kwargs):
         raise ConnectionResetError("storage acknowledgement lost after the write was issued")
     return result
 tools.atomic_write_text = _write_then_lose_the_ack
+# On Windows a running broker makes the workspace write itself (core.windows_broker.writes), and
+# atomic_write_text is never called: the same lost acknowledgement after that real write. Inert
+# elsewhere, where writes are never routed through the broker.
+import core.windows_broker.writes as brokered
+_brokered_write = brokered.write_file
+def _brokered_write_then_lose_the_ack(target, *args, **kwargs):
+    result = _brokered_write(target, *args, **kwargs)
+    if "%s" in str(target):
+        raise ConnectionResetError("storage acknowledgement lost after the write was issued")
+    return result
+brokered.write_file = _brokered_write_then_lose_the_ack
 sys.argv = sys.argv[1:]
 runpy.run_path(sys.argv[0], run_name="__main__")
-''' % LOST_ACK_MARKER
+''' % (LOST_ACK_MARKER, LOST_ACK_MARKER)
 
 
 def _scripted_turn(body: dict[str, Any], state: ProviderState, model: str) -> dict[str, Any]:
@@ -84,11 +95,16 @@ def served(tmp_path_factory):
         server, port = make_provider_server(state)
         home = tmp / "home"
         home.mkdir()
+        # The marked folder holds the turns' workspaces but not the daemon's home: on Windows the
+        # broker keeps its journal in the home and refuses to start when that journal lies inside a
+        # marked folder (journal_inside_flagged), and then no folder is marked at all.
+        workspaces = tmp / "workspaces"
+        workspaces.mkdir()
         daemon = ServedDaemon(home, port, extra_env={"PYTHONPATH": os.pathsep.join(
             [str(rig.REPO_ROOT), os.environ.get("PYTHONPATH", "")]).rstrip(os.pathsep),
             # this module's disposable folder, marked for the Windows write gate; ignored elsewhere
-            # (Jesse OK 16 Nov 18:56Z)
-            "VOOL_WINDOWS_DISPOSABLE_WORKSPACES": str(tmp)})
+            # (Jesse OK 16 Nov 18:56Z; a subfolder away from the home, Jesse OK 23 Nov 16:18Z)
+            "VOOL_WINDOWS_DISPOSABLE_WORKSPACES": str(workspaces)})
         real_popen = subprocess.Popen
 
         def lossy_popen(command, *args, **kwargs):
@@ -103,7 +119,7 @@ def served(tmp_path_factory):
             daemon.pin_provider_model()
             certified = daemon.certify_provider_model()
             assert (certified.get("result") or certified).get("state") == "verified", json.dumps(certified)[:400]
-            yield type("Served", (), {"daemon": daemon, "state": state, "tmp": tmp})
+            yield type("Served", (), {"daemon": daemon, "state": state, "tmp": tmp, "workspaces": workspaces})
         finally:
             daemon.stop()
             server.shutdown()
@@ -124,7 +140,7 @@ def _post(daemon: ServedDaemon, path: str, payload: dict[str, Any]) -> tuple[int
 
 
 def _turn(served, path: str, *, target: str, stream: bool, session: str) -> tuple[int, bytes, Path]:
-    workspace = served.tmp / session
+    workspace = served.workspaces / session
     workspace.mkdir()
     served.state.target = target
     status, body = _post(served.daemon, path, {

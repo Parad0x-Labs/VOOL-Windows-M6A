@@ -146,8 +146,14 @@ def rig(tmp_path_factory):
 def fresh_workspace(rig):
     import shutil
 
-    shutil.rmtree(rig["workspace"])
-    rig["workspace"].mkdir()
+    # Emptied in place, not removed and made again: on Windows the daemon's broker holds this marked
+    # folder open without delete sharing while it runs (docs/WINDOWS_BROKER.md section 4), so the
+    # folder itself cannot be deleted, and the broker refers to it by that handle, not by its path.
+    for child in list(rig["workspace"].iterdir()):
+        if child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
     rig["provider"].reset()
 
 
