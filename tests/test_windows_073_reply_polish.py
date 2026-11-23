@@ -46,6 +46,9 @@ FALSE_CLAIMS = (
     "The payment was not delayed and was sent.",
     "The payment you didn't expect was sent.",
     "The payment I never doubted was sent.",
+    "The payment I couldn't stop was sent.",
+    "The payment that never failed was sent.",
+    "The payment that wasn't held was transferred.",
 )
 
 
