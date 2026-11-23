@@ -929,7 +929,7 @@ def completion_claim_kind(text: str, *, request_text: str | None = None) -> str:
 #: honest report. A negation of anything else ("the payment you didn't expect was sent") or one followed by another
 #: clause ("didn't fail and was sent") still reads as a claim (Code Integration, 23 Nov).
 _WALLET_IN_MATCH_NEGATION_RE = re.compile(
-    rf"(?:\b(?:not|never)\b|n['’]t\b)\s+(?:(?:yet|been|be|actually)\s+)*(?:{_WALLET_COMPLETION_VERB})\b"
+    rf"(?:\b(?:not|never)\b|n['’]t\b)\s+(?:(?:yet|been|be|ever|actually|even)\s+){{0,3}}(?:{_WALLET_COMPLETION_VERB})\b"
     r"(?![^,;]*\b(?:and|but|then)\b)[^,;]*$",
     re.IGNORECASE,
 )
