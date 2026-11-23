@@ -61,6 +61,11 @@ _LANES: tuple[tuple[re.Pattern[str], str, str], ...] = (
     (_request(r"\bapple[\s-]*calendars?\b"), WINDOWS_APPLE_CALENDAR_ANSWER, "apple_calendar_unavailable_on_windows"),
     (_request(r"\bskill[\s-]*codex\b"), WINDOWS_SKILL_CODEX_ANSWER, "skill_codex_unavailable_on_windows"),
     (_request(r"\bvool[\s-]*drop\b"), WINDOWS_DROP_ANSWER, "drop_unavailable_on_windows"),
+    # "drop C:\\...\\file.txt": the message opens with "drop" and a full Windows path (drive or share). Steve row 10
+    # (0.7.3 at 8987cac7): it reached the model, which answered "Got it — dropping ..." with nothing run. Only that
+    # opening is claimed: "drop the last paragraph" or a path later in the sentence is not.
+    (re.compile(r"""^\s*drop\s+(?:the\s+)?(?:file\s+)?["'`]?(?:[A-Za-z]:[\\/]|\\\\)""", re.IGNORECASE),
+     WINDOWS_DROP_ANSWER, "drop_unavailable_on_windows"),
 )
 
 
