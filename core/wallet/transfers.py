@@ -510,6 +510,36 @@ def _human(minor: Any, decimals: int) -> str:
     return amounts.format_minor(int(minor), decimals) if minor is not None else ""
 
 
+def pending_approval_reply(proposal_id: str) -> str:
+    """On Windows, the chat's reply for a payment proposal that waits on its approval card: what it pays, to whom and
+    where, and that approving the card sends it; "" when the proposal is not pending approval, and always off Windows.
+
+    Steve, row 4 (0.7.3 at 8987cac7, 23 Nov 2026): the model proposed 1 USDT, then simulated the proposal; the loop
+    stopped on that preview with no text for the person and answered "I wasn't able to turn that into a completed
+    action", while the card sat waiting and the send went through once approved."""
+    if not _windows():
+        return ""
+    from core.wallet import payment_review, proposals
+
+    proposal = proposals.get_proposal(str(proposal_id or ""))
+    if proposal is None or proposal.state != proposals.STATE_PENDING_APPROVAL:
+        return ""
+    symbol = str(proposal.asset or "").upper()
+    try:
+        spec = chains.resolve_network(proposal.network)
+        place = spec.display_name
+        token = next((t for t in chains.user_transfer_tokens(proposal.network) if str(t.symbol).upper() == symbol), None)
+        decimals = int((token or chains.native_asset(proposal.network)).decimals)
+        amount = f"{_human(proposal.amount_minor, decimals)} {symbol}"
+    except Exception:  # an unreadable row still gets the approval sentence, in the wallet's own units
+        place, amount = str(proposal.network), f"{proposal.amount_minor} {symbol} (minor units)"
+    return (
+        f"The payment is waiting for your approval: {amount} to {payment_review.short_address(proposal.destination)} on "
+        f"{place}. Approve the card with your PIN, biometric or external wallet to send it. "
+        "Nothing has been signed or sent yet."
+    )
+
+
 def view_of(row: dict[str, Any]) -> dict[str, Any]:
     from core.wallet import environment
 
