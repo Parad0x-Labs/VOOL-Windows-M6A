@@ -171,8 +171,10 @@ def test_off_windows_the_wallet_answers_as_mac_ships_it(two_testys, monkeypatch)
 # --- units -------------------------------------------------------------------------------------------------------------
 
 _RESOLUTION = {"choices": [
-    {"display_name": "Testy Ann", "endpoints": [{"value": STEVE_ROW_4}]},
-    {"display_name": "Testy Bob", "endpoints": [{"value": "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"}]},
+    {"choose_with": "ct-ann", "contact_id": "ct-ann", "display_name": "Testy Ann",
+     "endpoints": [{"choose_with": "ep-ann", "endpoint_id": "ep-ann", "contact_id": "ct-ann", "display_name": "Testy Ann", "value": STEVE_ROW_4}]},
+    {"choose_with": "ct-bob", "contact_id": "ct-bob", "display_name": "Testy Bob",
+     "endpoints": [{"value": "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"}]},
 ]}
 _CONTEXT = {"turn_id": "turn-1", "session_id": "s1"}
 
@@ -182,6 +184,20 @@ def test_on_windows_an_evm_address_is_matched_whatever_its_case(monkeypatch) -> 
     rt._remember_recipient_question(_RESOLUTION, "which one?", _CONTEXT)
     assert rt._asked_recipient_question("0x5AAEB6053f3e94c9b9a09f33669435e7ef1beaed", _CONTEXT) == "which one?"
     assert rt._asked_recipient_question(STEVE_ROW_4, _CONTEXT) == "which one?"
+
+
+@pytest.mark.parametrize("named", ["ct-ann", "ep-ann", "ct-bob", "Testy Ann", "testy bob", "Testy Ann (main)"])
+def test_on_windows_an_offered_contact_by_id_or_name_is_held_too(monkeypatch, named) -> None:
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    rt._remember_recipient_question(_RESOLUTION, "which one?", _CONTEXT)
+    assert rt._asked_recipient_question(named, _CONTEXT) == "which one?"
+
+
+@pytest.mark.parametrize("named", ["Testy", "Testy Carl", "ct-carl", "ep-other", "Tess"])
+def test_on_windows_a_name_or_id_that_was_not_offered_is_not_held(monkeypatch, named) -> None:
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    rt._remember_recipient_question(_RESOLUTION, "which one?", _CONTEXT)
+    assert rt._asked_recipient_question(named, _CONTEXT) == ""
 
 
 def test_on_windows_another_turn_or_session_is_never_blocked(monkeypatch) -> None:
