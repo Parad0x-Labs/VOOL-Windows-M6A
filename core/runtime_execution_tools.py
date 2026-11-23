@@ -2729,9 +2729,10 @@ def _wallet_balances(source_context: dict[str, Any] | None) -> dict[str, Any]:
 #: Steve row 38 (0.7.3 at 8987cac7, 23 Nov 2026): two saved contacts matched "Testy"; wallet.propose asked which one
 #: twice, then the model called it again with one contact's raw address and chain=solana, and a proposal was drafted
 #: for a recipient nobody chose. The person's answer comes on a later turn, which this never blocks.
-_RECIPIENT_QUESTIONS: dict[str, tuple[float, frozenset[str], str]] = {}
+_RECIPIENT_QUESTIONS: dict[str, tuple[float, dict[str, str]]] = {}
 _RECIPIENT_QUESTION_TTL_SECONDS = 600.0
 _RECIPIENT_QUESTIONS_LOCK = threading.Lock()
+_NAME_PART_RE = re.compile(r"\s*\(")
 
 
 def _recipient_question_key(context: dict[str, Any] | None) -> str:
@@ -2766,6 +2767,11 @@ def _remember_recipient_question(resolution: dict[str, Any], message: str, conte
             for key_name in ("value", "choose_with", "contact_id", "endpoint_id"):
                 if _recipient_value(endpoint.get(key_name)):
                     values.add(_recipient_value(endpoint.get(key_name)))
+            # the ids exactly as stored, for the check on what a destination resolved to
+            for key_name in ("contact_id", "endpoint_id"):
+                raw = str(endpoint.get(key_name) or "").strip()
+                if raw:
+                    values.add(f"id:{raw}")
             name = str(endpoint.get("display_name") or "").strip().casefold()
             if name:
                 values.add(f"name:{name}")
@@ -2773,24 +2779,51 @@ def _remember_recipient_question(resolution: dict[str, Any], message: str, conte
         return
     now = time.monotonic()
     with _RECIPIENT_QUESTIONS_LOCK:
-        for stale in [k for k, (until, _v, _m) in _RECIPIENT_QUESTIONS.items() if until <= now]:
+        for stale in [k for k, (until, _held) in _RECIPIENT_QUESTIONS.items() if until <= now]:
             del _RECIPIENT_QUESTIONS[stale]
-        _RECIPIENT_QUESTIONS[key] = (now + _RECIPIENT_QUESTION_TTL_SECONDS, frozenset(values), message)
+        # a second question in the same turn adds to the first one's set; each value keeps the first question that offered it
+        _until, held = _RECIPIENT_QUESTIONS.get(key, (0.0, {}))
+        merged = dict(held)
+        for value in values:
+            merged.setdefault(value, message)
+        _RECIPIENT_QUESTIONS[key] = (now + _RECIPIENT_QUESTION_TTL_SECONDS, merged)
 
 
-def _asked_recipient_question(destination: str, context: dict[str, Any] | None) -> str:
-    """On Windows, the question this turn already asked when `destination` is one of the addresses it offered; "" otherwise."""
+def _held_recipient_question(tokens: set[str], context: dict[str, Any] | None) -> str:
     key = _recipient_question_key(context)
     if not key:
         return ""
     with _RECIPIENT_QUESTIONS_LOCK:
-        held = _RECIPIENT_QUESTIONS.get(key)
-    if held is None or held[0] <= time.monotonic():
+        entry = _RECIPIENT_QUESTIONS.get(key)
+    if entry is None or entry[0] <= time.monotonic():
         return ""
+    for token in sorted(tokens):
+        if token and token in entry[1]:
+            return entry[1][token]
+    return ""
+
+
+def _asked_recipient_question(destination: str, context: dict[str, Any] | None) -> str:
+    """On Windows, the question this turn already asked when `destination` is one of the recipients it offered; "" otherwise."""
     text = str(destination or "").strip()
-    named = text.casefold().split(" (", 1)[0].strip()
-    offered = _recipient_value(text) in held[1] or f"name:{named}" in held[1]
-    return held[2] if offered else ""
+    named = _NAME_PART_RE.split(text.casefold(), maxsplit=1)[0].strip()
+    return _held_recipient_question({_recipient_value(text), f"name:{named}" if named else ""}, context)
+
+
+def _asked_about_resolved_recipient(snapshot: dict[str, Any], context: dict[str, Any] | None) -> str:
+    """On Windows, the question this turn already asked when the destination RESOLVED to one of the recipients it
+    offered, by any spelling the resolver takes (an alias, a lookalike name, "Name(label)"); "" otherwise."""
+    if not isinstance(snapshot, dict):
+        return ""
+    tokens: set[str] = set()
+    if snapshot.get("resolution") == "contact":
+        for key_name in ("contact_id", "endpoint_id"):
+            raw = str(snapshot.get(key_name) or "").strip()
+            if raw:
+                tokens.add(f"id:{raw}")
+    if snapshot.get("resolution") in ("contact", "explicit"):
+        tokens.add(_recipient_value(snapshot.get("value")))
+    return _held_recipient_question(tokens, context)
 
 
 def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: dict[str, Any] | None) -> RuntimeExecutionResult:
@@ -2846,13 +2879,16 @@ def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: d
             # Nothing is proposed for a guessed payee, and a saved address is only ever used on the network it was saved for.
             # Windows (0.7.3): "mainnet"/"testnet"/"devnet" name no chain or network, and an address given directly
             # says its own family; a chain guessed from "mainnet" for it is dropped, a contradicting one is refused.
-            asked = _asked_recipient_question(str(args.get("destination") or ""), context)
-            if asked:
+            def _still_asked(question: str) -> RuntimeExecutionResult:
                 return RuntimeExecutionResult(
                     handled=True, ok=True, status="recipient_ambiguous",
-                    response_text=f"{asked} I asked which one you mean, so I won't pick one of their addresses myself. Nothing was proposed, signed or sent.",
+                    response_text=f"{question} I asked which one you mean, so I won't pick one of their addresses myself. Nothing was proposed, signed or sent.",
                     details={"observation": _tool_observation(intent=intent, tool_surface="wallet", ok=True, status="recipient_ambiguous")},
                 )
+
+            asked = _asked_recipient_question(str(args.get("destination") or ""), context)
+            if asked:
+                return _still_asked(asked)
             fitted = transfers.explicit_address_hints(str(args.get("destination") or ""), chain=str(args.get("chain") or ""),
                                                       network=str(args.get("network") or ""))
             if fitted.refusal:
@@ -2904,6 +2940,9 @@ def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: d
                         choices=list(resolution.get("choices") or []) or None, suggestions=list(resolution.get("suggestions") or []) or None)},
                 )
             recipient = recipient_outcome.snapshots[0]
+            asked = _asked_about_resolved_recipient(recipient, context)
+            if asked:
+                return _still_asked(asked)
             pinned_network = str(recipient.get("chain_network") or "") if recipient.get("resolution") == "contact" else ""
             if pilot_path:
                 # the caller path: one account on one row in the active environment, the amount parsed exactly
