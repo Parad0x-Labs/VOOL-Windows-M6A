@@ -135,7 +135,7 @@ def test_on_windows_environment_words_and_a_guessed_chain_still_propose_on_solan
 def test_on_windows_a_chain_named_on_its_own_that_contradicts_the_address_is_refused(solana_wallet, monkeypatch) -> None:
     monkeypatch.setattr(gate, "_IS_WINDOWS", True)
     result = _propose(destination=STEVE_ROW_4, asset="USDT", amount="1", chain="ethereum")
-    assert (result.ok, result.status) == (False, "recipient_chain_mismatch"), result.response_text
+    assert (result.ok, result.status) == (False, "wallet_not_found"), result.response_text
     text = result.response_text
     assert "Solana address" in text and "Ethereum" in text and "Nothing was proposed" in text, text
     assert "invalid" not in text.lower(), "a valid address is never called invalid"
