@@ -141,7 +141,7 @@ def test_on_windows_the_same_turn_refusal_repeats_the_question(two_testys, monke
     monkeypatch.setattr(rt, "_wallet_model_tool", capture)
     _turn(two_testys, "send Testy 1 USDT")
     assert len(texts) == 2, texts
-    assert texts[1].startswith(QUESTION) and "Which one?" in texts[1], texts[1]
+    assert texts[0].startswith(QUESTION) and texts[1].startswith("I already asked which saved contact you mean"), texts
     assert "I won't pick one of their addresses myself. Nothing was proposed, signed or sent." in texts[1], texts[1]
     assert _pending() == []
 
