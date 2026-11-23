@@ -6,7 +6,8 @@ resolver refused it ('mainnet' is not a network this wallet declares) before it 
 hints also mapped "mainnet" to Ethereum. The turn told the owner the request was invalid.
 
 On Windows (core/wallet/transfers.py explicit_address_hints, chain_hint):
-* "mainnet", "testnet" and "devnet" in the network or the chain count as unset;
+* "mainnet", "testnet" and "devnet" in the network or the chain count as unset when they name the active environment;
+  one naming another environment is refused, so a test request is never drafted as a real-money one (or the reverse);
 * an address given directly says its own family: base58 is Solana, 0x is EVM. A chain of the other family that came with
   an environment word for the network was guessed from that word and is dropped; one named on its own is refused;
 * the network left unset is the active environment's row of that family that carries the asset.
@@ -150,19 +151,23 @@ def test_off_windows_the_tool_lane_is_as_mac_ships_it(solana_wallet, monkeypatch
 
 # --- unit rows ----------------------------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize(("word", "windows", "expected"), [
-    ("mainnet", True, ""), ("Testnet", True, ""), ("devnet", True, ""), ("eth", True, "ethereum"), ("sol", True, "solana"),
-    ("mainnet", False, "ethereum"), ("eth", False, "ethereum"), ("testnet", False, "testnet"),
+@pytest.mark.parametrize(("word", "windows", "active", "expected"), [
+    ("mainnet", True, "mainnet", ""), ("Testnet", True, "testnet", ""), ("devnet", True, "testnet", ""),
+    ("testnet", True, "mainnet", "testnet"), ("devnet", True, "mainnet", "devnet"), ("mainnet", True, "testnet", "mainnet"),
+    ("eth", True, "mainnet", "ethereum"), ("sol", True, "mainnet", "solana"),
+    ("mainnet", False, "mainnet", "ethereum"), ("eth", False, "mainnet", "ethereum"), ("testnet", False, "mainnet", "testnet"),
 ])
-def test_chain_hint(monkeypatch, word, windows, expected) -> None:
+def test_chain_hint(monkeypatch, word, windows, active, expected) -> None:
     monkeypatch.setattr(gate, "_IS_WINDOWS", windows)
+    monkeypatch.setattr(transfers, "_active_environment", lambda: active)
     assert transfers.chain_hint(word) == expected
 
 
 @pytest.mark.parametrize(("destination", "chain", "network", "expected"), [
     (STEVE_ROW_4, "ethereum", "mainnet", ("", "")),
     (STEVE_ROW_4, "solana", "mainnet", ("solana", "")),
-    (STEVE_ROW_4, "mainnet", "devnet", ("", "")),
+    (STEVE_ROW_4, "devnet", "devnet", ("", "")),
+    (STEVE_ROW_4, "testnet", "", ("", "")),
     (EVM, "solana", "testnet", ("", "")),
     (EVM, "base", "mainnet", ("base", "")),
     (EVM, "ethereum", "eip155:1", ("ethereum", "eip155:1")),
@@ -170,7 +175,8 @@ def test_chain_hint(monkeypatch, word, windows, expected) -> None:
 ])
 def test_on_windows_explicit_address_hints_fit_the_address(monkeypatch, destination, chain, network, expected) -> None:
     monkeypatch.setattr(gate, "_IS_WINDOWS", True)
-    fitted = transfers.explicit_address_hints(destination, chain=chain, network=network)
+    active = "testnet" if "testnet" in (chain, network) or "devnet" in (chain, network) else "mainnet"
+    fitted = transfers.explicit_address_hints(destination, chain=chain, network=network, environment=active)
     assert ((fitted.chain, fitted.network), fitted.refusal) == (expected, "")
 
 
@@ -181,8 +187,43 @@ def test_on_windows_explicit_address_hints_fit_the_address(monkeypatch, destinat
 ])
 def test_on_windows_a_contradicting_chain_is_refused_without_calling_the_address_invalid(monkeypatch, destination, chain, shape, named) -> None:
     monkeypatch.setattr(gate, "_IS_WINDOWS", True)
-    fitted = transfers.explicit_address_hints(destination, chain=chain, network="")
+    fitted = transfers.explicit_address_hints(destination, chain=chain, network="", environment="mainnet")
+    assert fitted.status == "recipient_chain_mismatch"
     assert shape in fitted.refusal and named in fitted.refusal and "invalid" not in fitted.refusal.lower(), fitted.refusal
+
+
+@pytest.mark.parametrize(("chain", "network", "active", "said", "asked"), [
+    ("", "testnet", "mainnet", "Mainnet", "Testnet"),
+    ("", "devnet", "mainnet", "Mainnet", "Devnet"),
+    ("", "mainnet", "testnet", "Testnet", "Mainnet"),
+    ("mainnet", "", "testnet", "Testnet", "Mainnet"),
+    ("testnet", "mainnet", "mainnet", "Mainnet", "Testnet"),
+])
+def test_on_windows_an_environment_word_naming_another_environment_is_refused(monkeypatch, chain, network, active, said, asked) -> None:
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    fitted = transfers.explicit_address_hints(STEVE_ROW_4, chain=chain, network=network, environment=active)
+    assert fitted.status == "wallet_environment_mismatch", fitted.refusal
+    assert f"VOOL is on {said}; you asked for {asked}." in fitted.refusal
+
+
+@pytest.mark.parametrize("network", ["testnet", "devnet"])
+def test_on_windows_a_test_network_asked_on_mainnet_proposes_nothing(solana_wallet, monkeypatch, network) -> None:
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    result = _propose(destination=STEVE_ROW_4, asset="USDT", amount="1", network=network)
+    assert (result.ok, result.status) == (False, "wallet_environment_mismatch"), result.response_text
+    assert "VOOL is on Mainnet" in result.response_text and "Nothing was proposed, signed or sent." in result.response_text
+    assert _pending() == []
+
+
+def test_on_windows_a_test_network_asked_for_a_contact_on_mainnet_proposes_nothing(solana_wallet, monkeypatch) -> None:
+    from core.contacts import store
+
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    store.create_contact(display_name="Rowan", actor=store.ACTOR_OWNER,
+                         endpoints=[{"kind": "wallet", "value": STEVE_ROW_4, "network": SOLANA_MAINNET}])
+    result = _propose(destination="Rowan", asset="USDT", amount="1", chain="testnet")
+    assert not result.ok, result.response_text
+    assert _pending() == []
 
 
 def test_off_windows_explicit_address_hints_pass_the_values_through(monkeypatch) -> None:
