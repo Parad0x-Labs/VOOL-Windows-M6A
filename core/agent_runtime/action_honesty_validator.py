@@ -925,10 +925,12 @@ def completion_claim_kind(text: str, *, request_text: str | None = None) -> str:
 #: payment was not sent because payments are frozen", and the reply was swapped for the generic wallet-safety text, so
 #: the person never saw the freeze. The claim pattern lets a few words sit between "payment" and "sent", so the "not"
 #: was INSIDE the match, where the adjacent-negation check before it never looks. A negation inside the match that
-#: governs the verb ("was not sent", "wasn't sent", "has not been sent", "not sent:") is the same honest report. One
-#: followed by another clause ("didn't fail and was sent", "not the refund, was sent") still reads as a claim.
+#: governs the completion verb itself ("was not sent", "wasn't sent", "has not yet been sent", "not sent:") is the same
+#: honest report. A negation of anything else ("the payment you didn't expect was sent") or one followed by another
+#: clause ("didn't fail and was sent") still reads as a claim (Code Integration, 23 Nov).
 _WALLET_IN_MATCH_NEGATION_RE = re.compile(
-    r"(?:\b(?:not|never)\b|n['’]t\b)(?![^,;]*\b(?:and|but|then)\b)[^,;]*$",
+    rf"(?:\b(?:not|never)\b|n['’]t\b)\s+(?:(?:yet|been|be|actually)\s+)*(?:{_WALLET_COMPLETION_VERB})\b"
+    r"(?![^,;]*\b(?:and|but|then)\b)[^,;]*$",
     re.IGNORECASE,
 )
 
