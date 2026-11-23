@@ -2879,16 +2879,18 @@ def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: d
             # Nothing is proposed for a guessed payee, and a saved address is only ever used on the network it was saved for.
             # Windows (0.7.3): "mainnet"/"testnet"/"devnet" name no chain or network, and an address given directly
             # says its own family; a chain guessed from "mainnet" for it is dropped, a contradicting one is refused.
-            def _still_asked(question: str) -> RuntimeExecutionResult:
+            def _still_asked() -> RuntimeExecutionResult:
+                # The question itself is not repeated: the turn's first answer already holds it, and the tool output
+                # shown when the model's follow-up fails joins every step's text (Steve, 725f22b2: the question twice).
                 return RuntimeExecutionResult(
                     handled=True, ok=True, status="recipient_ambiguous",
-                    response_text=f"{question} I asked which one you mean, so I won't pick one of their addresses myself. Nothing was proposed, signed or sent.",
+                    response_text="I already asked which saved contact you mean, so I won't pick one of their addresses myself. Nothing was proposed, signed or sent.",
                     details={"observation": _tool_observation(intent=intent, tool_surface="wallet", ok=True, status="recipient_ambiguous")},
                 )
 
             asked = _asked_recipient_question(str(args.get("destination") or ""), context)
             if asked:
-                return _still_asked(asked)
+                return _still_asked()
             fitted = transfers.explicit_address_hints(str(args.get("destination") or ""), chain=str(args.get("chain") or ""),
                                                       network=str(args.get("network") or ""))
             if fitted.refusal:
@@ -2942,7 +2944,7 @@ def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: d
             recipient = recipient_outcome.snapshots[0]
             asked = _asked_about_resolved_recipient(recipient, context)
             if asked:
-                return _still_asked(asked)
+                return _still_asked()
             pinned_network = str(recipient.get("chain_network") or "") if recipient.get("resolution") == "contact" else ""
             if pilot_path:
                 # the caller path: one account on one row in the active environment, the amount parsed exactly

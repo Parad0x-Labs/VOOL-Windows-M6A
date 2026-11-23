@@ -921,6 +921,26 @@ def completion_claim_kind(text: str, *, request_text: str | None = None) -> str:
     return ""
 
 
+#: Windows (0.7.3, Steve on 725f22b2, receipt pay-caa03545): a send refused by the panic freeze was drafted as "the
+#: payment was not sent because payments are frozen", and the reply was swapped for the generic wallet-safety text, so
+#: the person never saw the freeze. The claim pattern lets a few words sit between "payment" and "sent", so the "not"
+#: was INSIDE the match, where the adjacent-negation check before it never looks. A negation inside the match that
+#: governs the completion verb itself ("was not sent", "wasn't sent", "has not yet been sent", "not sent:") is the same
+#: honest report. A negation of anything else ("the payment you didn't expect was sent") or one followed by another
+#: clause ("didn't fail and was sent") still reads as a claim (Code Integration, 23 Nov).
+_WALLET_IN_MATCH_NEGATION_RE = re.compile(
+    rf"(?:\b(?:not|never)\b|n['’]t\b)\s+(?:(?:yet|been|be|ever|actually|even)\s+){{0,3}}(?:{_WALLET_COMPLETION_VERB})\b"
+    r"(?![^,;]*\b(?:and|but|then)\b)[^,;]*$",
+    re.IGNORECASE,
+)
+
+
+def _negated_inside_claim(claim: str) -> bool:
+    from core import windows_write_gate
+
+    return windows_write_gate.active() and bool(_WALLET_IN_MATCH_NEGATION_RE.search(claim))
+
+
 def _claims_false_payment(text: str) -> bool:
     for sentence in _split_sentences(text):
         sentence_match = _WALLET_FALSE_SIGN_RE.search(sentence)
@@ -940,6 +960,8 @@ def _claims_false_payment(text: str) -> bool:
                 continue
             if _WALLET_CLAIM_NEGATION_RE.search(clause[max(0, match.start() - 20) : match.start()]):
                 continue  # a negation adjacent to the claim ("no funds were sent")
+            if _negated_inside_claim(match.group(0)):
+                continue  # on Windows, a negation inside the claim ("the payment was not sent")
             if _WALLET_HYPOTHETICAL_RE.search(clause):
                 continue  # "once the transaction is settled, you get a receipt" — generic protocol, not a claim
             if narrated:
