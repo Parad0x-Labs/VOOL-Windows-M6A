@@ -470,12 +470,19 @@ def test_a_pet_parked_on_send_or_approve_never_takes_their_click(tmp_path):
                         except Exception as error:
                             # Same wait, same error: the note only names the iteration and what the
                             # turn had reached, which -q --tb=short otherwise leaves out.
-                            last = page.evaluate(
-                                "() => { const m = [...document.querySelectorAll('.msg.assistant .msg-text')].at(-1);"
-                                " return m ? m.textContent : null; }")
-                            error.add_note(f"width={width} motion={motion} provider_calls={len(provider.calls)} "
-                                           f"answer_attempts={sum(map(is_answer_attempt, provider.calls))} "
-                                           f"last_assistant_text={last!r}")
+                            # The original error is always what is raised: a page that is gone, or a
+                            # Python without add_note (3.10), only loses the note.
+                            try:
+                                last = page.evaluate(
+                                    "() => { const m = [...document.querySelectorAll('.msg.assistant .msg-text')].at(-1);"
+                                    " return m ? m.textContent : null; }")
+                            except Exception as read_error:
+                                last = f"(not readable: {type(read_error).__name__})"
+                            add_note = getattr(error, "add_note", None)
+                            if add_note is not None:
+                                add_note(f"width={width} motion={motion} provider_calls={len(provider.calls)} "
+                                         f"answer_attempts={sum(map(is_answer_attempt, provider.calls))} "
+                                         f"last_assistant_text={last!r}")
                             raise
                         answers = [call for call in provider.calls if is_answer_attempt(call)]
                         assert len(answers) == 1, (width, motion, len(answers))
