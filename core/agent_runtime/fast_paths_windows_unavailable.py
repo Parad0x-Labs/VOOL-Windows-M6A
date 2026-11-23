@@ -44,9 +44,15 @@ _VERBS = (
 )
 
 
+# Within one sentence. A `.` ends it only before a space or the end, so a file or path typed between
+# the verb and the subject ("send the file C:\\...\\drop-test.txt to my phone with VOOL Drop") does
+# not split the sentence (Steve row 10, 23 Nov 2026).
+_SAME_SENTENCE = r"(?:[^\n.!?]|\.(?=\S))*"
+
+
 def _request(subject: str) -> re.Pattern[str]:
     return re.compile(
-        rf"\b(?:{_VERBS})\b[^\n.!?]*{subject}|{subject}[^\n.!?]*\b(?:{_VERBS})\b",
+        rf"\b(?:{_VERBS})\b{_SAME_SENTENCE}{subject}|{subject}{_SAME_SENTENCE}\b(?:{_VERBS})\b",
         re.IGNORECASE,
     )
 
