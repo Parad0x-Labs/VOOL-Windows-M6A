@@ -2774,11 +2774,23 @@ def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: d
             # The recipient first (PA Contacts): an address given directly stays that address; a saved contact resolves to
             # exactly one wallet address saved for a fitting network of the active environment, or the request asks.
             # Nothing is proposed for a guessed payee, and a saved address is only ever used on the network it was saved for.
+            # Windows (0.7.3): "mainnet"/"testnet"/"devnet" name no chain or network, and an address given directly
+            # says its own family; a chain guessed from "mainnet" for it is dropped, a contradicting one is refused.
+            fitted = transfers.explicit_address_hints(str(args.get("destination") or ""), chain=str(args.get("chain") or ""),
+                                                      network=str(args.get("network") or ""))
+            if fitted.refusal:
+                return RuntimeExecutionResult(
+                    handled=True, ok=False, status="recipient_chain_mismatch",
+                    response_text=f"{fitted.refusal} Nothing was proposed, signed or sent.",
+                    details={"observation": _tool_observation(intent=intent, tool_surface="wallet", ok=False, status="recipient_chain_mismatch")},
+                )
+            if (fitted.chain, fitted.network) != (str(args.get("chain") or "").strip(), str(args.get("network") or "").strip()):
+                args = {**args, "chain": fitted.chain, "network": fitted.network}
             requested_chain = str(args.get("chain") or "").strip().lower()
             recipient_outcome = resolve_wallet_recipient(
                 str(args.get("destination") or ""),
                 network=str(args.get("network") or "") or (legacy_profile.network if legacy_profile is not None else ""),
-                chain=transfers._CHAIN_HINTS.get(requested_chain, requested_chain),
+                chain=transfers.chain_hint(requested_chain),
                 asset=str(args.get("asset") or ("SOL" if legacy_profile is not None else "")),
                 environment=environment.active_environment().environment,
             )

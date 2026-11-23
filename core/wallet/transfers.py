@@ -64,6 +64,65 @@ _CHAIN_HINTS: dict[str, str] = {
 }
 
 
+#: Windows only (0.7.3): words that name an environment, not a chain or a network. A model that reads "send ... 1 USDT"
+#: on Mainnet may pass network="mainnet" and a chain guessed from it ("mainnet" mapped to Ethereum in _CHAIN_HINTS).
+_ENVIRONMENT_WORDS = frozenset({"mainnet", "testnet", "devnet"})
+
+
+def _windows() -> bool:
+    try:
+        from core import windows_write_gate
+
+        return windows_write_gate.active()
+    except Exception:
+        return False
+
+
+def chain_hint(chain: str) -> str:
+    """The chain key a caller's chain name stands for. On Windows an environment word ("mainnet") names no chain."""
+    key = str(chain or "").strip().lower()
+    if _windows() and key in _ENVIRONMENT_WORDS:
+        return ""
+    return _CHAIN_HINTS.get(key, key)
+
+
+class ExplicitAddressHints:
+    """Windows only: the chain and network a model passed for a payment to an address given directly, made to fit the
+    address. ``refusal`` is set when the request named a chain of another kind than the address."""
+
+    __slots__ = ("chain", "network", "refusal")
+
+    def __init__(self, chain: str, network: str, refusal: str = "") -> None:
+        self.chain, self.network, self.refusal = chain, network, refusal
+
+
+def explicit_address_hints(destination: str, *, chain: str, network: str) -> ExplicitAddressHints:
+    """Windows only (0.7.3, Steve row 4). An environment word in the network or the chain counts as unset. For an address
+    given directly, its shape says the family (base58 is Solana, 0x is EVM): a chain of the other family is refused,
+    unless it came with an environment word for the network, where it was guessed from that word and is dropped. The
+    network left unset is then the active environment's row of that family that carries the asset (resolve_request).
+    Off Windows the values come back as given."""
+    raw_chain, raw_network = str(chain or "").strip(), str(network or "").strip()
+    if not _windows():
+        return ExplicitAddressHints(raw_chain, raw_network)
+    network_was_environment = raw_network.lower() in _ENVIRONMENT_WORDS
+    out_network = "" if network_was_environment else raw_network
+    out_chain = "" if raw_chain.lower() in _ENVIRONMENT_WORDS else raw_chain
+    family = _destination_family(destination)
+    key = _CHAIN_HINTS.get(out_chain.lower(), out_chain.lower())
+    if family and key:
+        kinds = {spec.family for spec in chains.all_networks() if spec.chain_key == key}
+        if kinds and family not in kinds:
+            if network_was_environment:
+                out_chain = ""
+            else:
+                shape = "a Solana address" if family == chains.FAMILY_SVM else "an EVM (0x) address"
+                named = next((spec.display_name for spec in chains.all_networks() if spec.chain_key == key), out_chain)
+                return ExplicitAddressHints(out_chain, out_network, refusal=(
+                    f"{str(destination).strip()} is {shape}, so it can't receive on {named}. Say the chain the address is on."))
+    return ExplicitAddressHints(out_chain, out_network)
+
+
 def destination_family(destination: str) -> str:
     """The family a recipient's shape belongs to: ``evm`` for a 20-byte hex address, ``svm`` for a base58 key, else ``""``."""
     return _destination_family(destination)
@@ -92,7 +151,7 @@ def resolve_request(*, destination: str, asset: str = "", amount: Any = None, am
     rows = list(chains.rows_for_environment(active))
     wanted_wallet = str(wallet_id or "").strip()
     explicit_network = str(network or "").strip()
-    chain_key = _CHAIN_HINTS.get(str(chain or "").strip().lower(), str(chain or "").strip().lower())
+    chain_key = chain_hint(chain)
     symbol = str(asset or "").strip().upper()
     family_hint = _destination_family(destination)
     candidates: list[dict[str, Any]] = []
