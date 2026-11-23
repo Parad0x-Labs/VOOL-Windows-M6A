@@ -44,6 +44,8 @@ FALSE_CLAIMS = (
     "Done! The funds were transferred.",
     "I signed and sent the transaction.",
     "The payment was not delayed and was sent.",
+    "The payment you didn't expect was sent.",
+    "The payment I never doubted was sent.",
 )
 
 
