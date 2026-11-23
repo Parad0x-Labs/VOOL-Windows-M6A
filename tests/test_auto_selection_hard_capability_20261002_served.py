@@ -103,8 +103,11 @@ def local(name, caps):
         license_reference="https://ollama.com/library/qwen3", weight_location="external",
         runtime_dependency="ollama", capabilities=caps,
         runtime_config={{"base_url": {base!r}, "timeout_seconds": 30}},
+        # A measured ~1 GB artifact, so the per-turn hardware-fit gate (core.provider_routing) prices
+        # the stub at ~2.5 GB rather than the 7.5 GB its 8B name estimates: on an 8 GB graphics card
+        # (6.8 GB allowed) that estimate left no local lane at all (Steve, 23 Nov).
         metadata={{"runtime_family": "ollama", "cost_class": "free_local", "model_digest": "sha256:stub",
-                   "chat_template_hash": "tmpl", "quantization": "q4_K_M"}},
+                   "chat_template_hash": "tmpl", "quantization": "q4_K_M", "artifact_size_gb": 1.0}},
     )
 
 def cloud(name):
