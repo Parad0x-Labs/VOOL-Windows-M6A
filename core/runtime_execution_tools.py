@@ -2779,10 +2779,11 @@ def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: d
             fitted = transfers.explicit_address_hints(str(args.get("destination") or ""), chain=str(args.get("chain") or ""),
                                                       network=str(args.get("network") or ""))
             if fitted.refusal:
+                refused = fitted.status or "recipient_chain_mismatch"
                 return RuntimeExecutionResult(
-                    handled=True, ok=False, status="recipient_chain_mismatch",
+                    handled=True, ok=False, status=refused,
                     response_text=f"{fitted.refusal} Nothing was proposed, signed or sent.",
-                    details={"observation": _tool_observation(intent=intent, tool_surface="wallet", ok=False, status="recipient_chain_mismatch")},
+                    details={"observation": _tool_observation(intent=intent, tool_surface="wallet", ok=False, status=refused)},
                 )
             if (fitted.chain, fitted.network) != (str(args.get("chain") or "").strip(), str(args.get("network") or "").strip()):
                 args = {**args, "chain": fitted.chain, "network": fitted.network}

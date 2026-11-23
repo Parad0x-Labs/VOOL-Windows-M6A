@@ -67,6 +67,15 @@ _CHAIN_HINTS: dict[str, str] = {
 #: Windows only (0.7.3): words that name an environment, not a chain or a network. A model that reads "send ... 1 USDT"
 #: on Mainnet may pass network="mainnet" and a chain guessed from it ("mainnet" mapped to Ethereum in _CHAIN_HINTS).
 _ENVIRONMENT_WORDS = frozenset({"mainnet", "testnet", "devnet"})
+#: the environment each word names (Solana Devnet is a row of the test environment)
+_WORD_ENVIRONMENT = {"mainnet": chains.ENVIRONMENT_MAINNET, "testnet": chains.ENVIRONMENT_TESTNET, "devnet": chains.ENVIRONMENT_TESTNET}
+_ENVIRONMENT_LABEL = {chains.ENVIRONMENT_MAINNET: "Mainnet", chains.ENVIRONMENT_TESTNET: "Testnet"}
+
+
+def _active_environment() -> str:
+    from core.wallet import environment
+
+    return environment.active_environment().environment
 
 
 def _windows() -> bool:
@@ -82,7 +91,9 @@ def chain_hint(chain: str) -> str:
     """The chain key a caller's chain name stands for. On Windows an environment word ("mainnet") names no chain."""
     key = str(chain or "").strip().lower()
     if _windows() and key in _ENVIRONMENT_WORDS:
-        return ""
+        # the active environment's own word names nothing more; another environment's word matches no row here, so
+        # the request is refused rather than moved to the active environment (a test ask never becomes real money)
+        return "" if _WORD_ENVIRONMENT[key] == _active_environment() else key
     return _CHAIN_HINTS.get(key, key)
 
 
@@ -90,21 +101,30 @@ class ExplicitAddressHints:
     """Windows only: the chain and network a model passed for a payment to an address given directly, made to fit the
     address. ``refusal`` is set when the request named a chain of another kind than the address."""
 
-    __slots__ = ("chain", "network", "refusal")
+    __slots__ = ("chain", "network", "refusal", "status")
 
-    def __init__(self, chain: str, network: str, refusal: str = "") -> None:
-        self.chain, self.network, self.refusal = chain, network, refusal
+    def __init__(self, chain: str, network: str, refusal: str = "", status: str = "") -> None:
+        self.chain, self.network, self.refusal, self.status = chain, network, refusal, status
 
 
-def explicit_address_hints(destination: str, *, chain: str, network: str) -> ExplicitAddressHints:
+def explicit_address_hints(destination: str, *, chain: str, network: str, environment: str = "") -> ExplicitAddressHints:
     """Windows only (0.7.3, Steve row 4). An environment word in the network or the chain counts as unset. For an address
     given directly, its shape says the family (base58 is Solana, 0x is EVM): a chain of the other family is refused,
     unless it came with an environment word for the network, where it was guessed from that word and is dropped. The
     network left unset is then the active environment's row of that family that carries the asset (resolve_request).
-    Off Windows the values come back as given."""
+    An environment word counts as unset only when it names the active environment: one naming another environment is
+    refused, so a test request is never drafted as a real-money one (or the reverse). Off Windows the values come back
+    as given."""
     raw_chain, raw_network = str(chain or "").strip(), str(network or "").strip()
     if not _windows():
         return ExplicitAddressHints(raw_chain, raw_network)
+    active = str(environment or "").strip().lower() or _active_environment()
+    for word in (raw_network.lower(), raw_chain.lower()):
+        asked = _WORD_ENVIRONMENT.get(word)
+        if asked and asked != active:
+            return ExplicitAddressHints(raw_chain, raw_network, refusal=(
+                f"VOOL is on {_ENVIRONMENT_LABEL.get(active, active)}; you asked for {word.capitalize()}. "
+                "Switch the environment in Settings, Crypto, Developer options first."), status="wallet_environment_mismatch")
     network_was_environment = raw_network.lower() in _ENVIRONMENT_WORDS
     out_network = "" if network_was_environment else raw_network
     out_chain = "" if raw_chain.lower() in _ENVIRONMENT_WORDS else raw_chain
@@ -119,7 +139,8 @@ def explicit_address_hints(destination: str, *, chain: str, network: str) -> Exp
                 shape = "a Solana address" if family == chains.FAMILY_SVM else "an EVM (0x) address"
                 named = next((spec.display_name for spec in chains.all_networks() if spec.chain_key == key), out_chain)
                 return ExplicitAddressHints(out_chain, out_network, refusal=(
-                    f"{str(destination).strip()} is {shape}, so it can't receive on {named}. Say the chain the address is on."))
+                    f"{str(destination).strip()} is {shape}, so it can't receive on {named}. Say the chain the address is on."),
+                    status="recipient_chain_mismatch")
     return ExplicitAddressHints(out_chain, out_network)
 
 
