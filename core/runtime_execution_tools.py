@@ -2780,9 +2780,22 @@ def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: d
                                                       network=str(args.get("network") or ""))
             if fitted.refusal:
                 refused = fitted.status or "recipient_chain_mismatch"
+                said = f"{fitted.refusal} Nothing was proposed, signed or sent."
+                if refused == "recipient_chain_mismatch":
+                    # The wallet's own answer for an address no account of the named chain can pay: the typed
+                    # wallet_not_found fault the resolver gives (no_signing_account_for_request), with the
+                    # plain sentence saying why. tests/wallet/test_crypto_pilot_request.py pins that answer.
+                    fault = WalletFault("wallet_not_found", context={
+                        "reason": "no_signing_account_for_request", "chain_mismatch": True,
+                        "chain": str(args.get("chain") or "").strip().lower()}, message=said)
+                    return RuntimeExecutionResult(
+                        handled=True, ok=False, status=fault.code, response_text=said,
+                        details={"fault": fault.to_dict(), "observation": _tool_observation(
+                            intent=intent, tool_surface="wallet", ok=False, status=fault.code, fault_code=fault.code)},
+                    )
                 return RuntimeExecutionResult(
                     handled=True, ok=False, status=refused,
-                    response_text=f"{fitted.refusal} Nothing was proposed, signed or sent.",
+                    response_text=said,
                     details={"observation": _tool_observation(intent=intent, tool_surface="wallet", ok=False, status=refused)},
                 )
             if (fitted.chain, fitted.network) != (str(args.get("chain") or "").strip(), str(args.get("network") or "").strip()):
