@@ -282,6 +282,26 @@ def _batch_member_is_read_only(intent: str, arguments: dict[str, Any] | None = N
 _NON_EXECUTING_INTENTS = {"respond.direct", "none", "no_tool"}
 
 
+def _windows_tool_asked_the_person(step: dict[str, Any] | None) -> bool:
+    """Windows (0.7.3, Steve on 725f22b2): whether this step is a wallet "which one?", a question only the person answers.
+
+    Row 38 with qwen3:8b: after wallet.propose answered "2 saved contacts match 'Testy' ... Which one?", the model's
+    next round was prose with no tool call (MALFORMED_TOOL_CALL), and the turn ended on "The model's follow-up step
+    failed, so this is the tool output without a written answer." with the question shown twice. When the turn ends
+    on such a question, the question is the reply. Off Windows the loop answers as Mac ships it.
+    """
+    from core import windows_write_gate
+
+    return bool(
+        windows_write_gate.active()
+        and isinstance(step, dict)
+        and step.get("ok")
+        and str(step.get("status") or "") == "recipient_ambiguous"
+        and str(step.get("tool_name") or "").startswith("wallet.")
+        and str(step.get("response_text") or "").strip()
+    )
+
+
 def _completes_turn(intent: str) -> bool:
     """Whether a successful call of this tool is the whole answer (contract `completes_turn`)."""
     try:
@@ -2668,6 +2688,7 @@ class ResearchToolLoopFacadeMixin:
         #
         # Windows only for 0.7.1, on the seam the approval spend uses (Security Architect): Mac and
         # Linux keep the synthesis path exactly as it was.
+        from core import windows_write_gate
         from core.execution_gate import operator_approval_spend_applies
 
         followup_failure = ""
@@ -2688,13 +2709,19 @@ class ResearchToolLoopFacadeMixin:
             for step in ran_steps:
                 text = str(step.get("response_text") or step.get("summary") or "").strip()
                 if text and text not in outputs:
+                    if windows_write_gate.active() and any(text in kept for kept in outputs):
+                        continue  # Windows: an output an earlier one already shows in full is not shown twice
+                    if windows_write_gate.active():
+                        outputs = [kept for kept in outputs if kept not in text]  # ...nor one a later output repeats
                     outputs.append(text)
             followup_message = "\n\n".join(outputs) or self._tool_loop_final_message(None, executed_steps)
-            # The cause stays in details (`followup_failure`); the reply says it plainly.
-            followup_message += (
-                "\n\nThe model's follow-up step failed, so this is the tool output without a "
-                "written answer."
-            )
+            # The cause stays in details (`followup_failure`); the reply says it plainly. On Windows a wallet
+            # "which one?" is already the whole answer: the person sees the question, not a failure note.
+            if not _windows_tool_asked_the_person(ran_steps[-1]):
+                followup_message += (
+                    "\n\nThe model's follow-up step failed, so this is the tool output without a "
+                    "written answer."
+                )
             steps_ok = all(bool(step.get("ok", True)) for step in ran_steps)
             self._emit_runtime_event(
                 loop_source_context,
