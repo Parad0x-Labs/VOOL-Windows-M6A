@@ -2861,9 +2861,15 @@ def _remember_pending_recipient_choice(resolution: dict[str, Any], args: dict[st
         name = str(choice.get("display_name") or "").strip()
         if not contact_id or not name:
             continue
-        values = [str(endpoint.get("value") or "").strip() for endpoint in [choice, *(choice.get("endpoints") or ())]
-                  if isinstance(endpoint, dict) and str(endpoint.get("value") or "").strip()]
-        candidates.append({"contact_id": contact_id, "display_name": name, "values": "\x1f".join(dict.fromkeys(values))})
+        # each address with the endpoint it belongs to, so a pick by address names that one endpoint
+        addresses: dict[str, str] = {}
+        for endpoint in [choice, *(choice.get("endpoints") or ())]:
+            value = str(endpoint.get("value") or "").strip() if isinstance(endpoint, dict) else ""
+            if value:
+                endpoint_id = str(endpoint.get("endpoint_id") or "").strip()
+                addresses[value] = addresses.get(value) or (endpoint_id if endpoint_id.startswith("ep-") else "")
+        candidates.append({"contact_id": contact_id, "display_name": name, "values": "\x1f".join(addresses),
+                           "endpoint_ids": "\x1f".join(addresses.values())})
     if len(candidates) < 2:
         return
     request = {key: args[key] for key in _PENDING_CHOICE_ARGUMENTS if args.get(key) not in (None, "")}
