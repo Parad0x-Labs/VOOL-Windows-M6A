@@ -98,7 +98,8 @@ def test_on_windows_the_same_send_while_frozen_gets_the_freeze_text_and_no_card(
 
     limits.set_frozen(True)
     try:
-        result = rt._wallet_model_tool("wallet.propose", dict(COMPOSER), {"session_id": "frozen", "turn_id": "turn-f"})
+        result = rt._wallet_model_tool("wallet.propose", dict(COMPOSER), {
+            "session_id": "frozen", "turn_id": "turn-f", "turn_request": {"user_text": "send Testy 1 USDT"}})
     finally:
         limits.set_frozen(False)
     assert result.response_text.startswith(FROZEN), result.response_text
@@ -125,31 +126,61 @@ def test_on_windows_a_contact_with_usdt_on_solana_and_ethereum_is_asked_which_no
     assert _pending() == []
 
 
-@pytest.mark.parametrize(("destination", "chain", "network", "expected"), (
-    ("Testy", "ethereum", "eip155:1", ("ethereum", "eip155:1")),  # an explicit chain with a real network is kept
-    ("Testy", "solana", SOLANA_MAINNET, ("solana", SOLANA_MAINNET)),
-    ("Testy", "base", "", ("base", "")),  # a chain with no network at all is the person's, not a guess
-    ("ct-0123456789abcdef", "ethereum", "mainnet", ("", "")),  # a contact id, like a name
-    ("Testy", "ethereum", "mainnet", ("", "")),
-    ("Testy", "", "mainnet", ("", "")),
-    (STEVE_ROW_4, "solana", "mainnet", ("solana", "")),  # an address keeps the chain of its own family
-    (EVM, "ethereum", "mainnet", ("ethereum", "")),
+COMPOSER_TEXT = "send Testy 1 USDT"
+
+
+@pytest.mark.parametrize(("destination", "chain", "network", "text", "expected"), (
+    ("Testy", "ethereum", "mainnet", COMPOSER_TEXT, ("", "")),  # the model's guess beside "mainnet": dropped
+    ("Testy", "", "mainnet", COMPOSER_TEXT, ("", "")),
+    ("ct-0123456789abcdef", "ethereum", "mainnet", "pay ct-0123456789abcdef 1 USDT", ("", "")),  # a contact id, like a name
+    ("Testy", "ethereum", "mainnet", "send Testy 1 USDT on ethereum", ("ethereum", "")),  # the person named it: kept
+    ("Testy", "ethereum", "mainnet", "send Testy 1 USDT on Ethereum please", ("ethereum", "")),
+    ("Testy", "ethereum", "mainnet", "send Testy 1 USDT (ERC20)", ("ethereum", "")),
+    ("Testy", "base", "mainnet", "send Testy 1 USDT on base", ("base", "")),
+    ("Testy", "ethereum", "mainnet", "send Testy 1 USDT on sol", ("ethereum", "")),  # any chain named: not dropped
+    ("Testy", "ethereum", "mainnet", None, ("ethereum", "")),  # no message to read: kept, fail closed
+    ("Testy", "ethereum", "eip155:1", COMPOSER_TEXT, ("ethereum", "eip155:1")),  # an explicit chain with a real network
+    ("Testy", "solana", SOLANA_MAINNET, COMPOSER_TEXT, ("solana", SOLANA_MAINNET)),
+    ("Testy", "base", "", COMPOSER_TEXT, ("base", "")),  # a chain with no network at all is not a guess beside "mainnet"
+    (STEVE_ROW_4, "solana", "mainnet", COMPOSER_TEXT, ("solana", "")),  # an address keeps the chain of its own family
+    (EVM, "ethereum", "mainnet", COMPOSER_TEXT, ("ethereum", "")),
 ))
-def test_on_windows_only_a_chain_beside_an_environment_word_is_dropped_for_a_contact(monkeypatch, destination, chain,
-                                                                                      network, expected) -> None:
+def test_on_windows_only_a_guessed_chain_beside_an_environment_word_is_dropped_for_a_contact(
+        monkeypatch, destination, chain, network, text, expected) -> None:
     monkeypatch.setattr(gate, "_IS_WINDOWS", True)
-    fitted = transfers.explicit_address_hints(destination, chain=chain, network=network, environment="mainnet")
+    fitted = transfers.explicit_address_hints(destination, chain=chain, network=network, environment="mainnet",
+                                              request_text=text)
     assert ((fitted.chain, fitted.network), fitted.refusal) == (expected, "")
 
 
+def test_on_windows_send_testy_on_ethereum_to_a_solana_only_contact_is_refused(solana_only_testy, monkeypatch) -> None:
+    seen = _script(solana_only_testy, monkeypatch, [COMPOSER])
+    reply = _say(solana_only_testy, "send Testy 1 USDT on ethereum")
+    assert seen and seen[0][3] == "recipient_has_no_address", (seen, reply)
+    assert "Ethereum" in reply and _pending() == [], reply
+
+
+def test_on_windows_the_pick_keeps_the_chain_the_asking_turn_kept(steves_testys, monkeypatch) -> None:
+    seen = _script(steves_testys, monkeypatch, [COMPOSER])
+    _say(steves_testys, "send Testy 1 USDT on ethereum")
+    assert [status for _d, _t, _s, status in seen] == ["recipient_ambiguous"], seen
+    ((_until, _turn, request, _candidates),) = rt._PENDING_RECIPIENT_CHOICES.values()
+    assert request.get("chain") == "ethereum", request
+    _script(steves_testys, monkeypatch, [])
+    reply = _say(steves_testys, "Testy")
+    assert _pending() == [], reply  # Testy has no Ethereum wallet: refused, never moved to Solana
+    assert "Ethereum" in reply, reply
+
+
 @pytest.mark.parametrize(("destination", "chain", "network"), (
-    ("Testy", "ethereum", "mainnet"),
+    ("Testy", "ethereum", "mainnet"),  # with the person's message naming no chain, too (below)
     ("Testy", "ethereum", "eip155:1"),
     (STEVE_ROW_4, "ethereum", "mainnet"),
 ))
 def test_off_windows_the_hints_come_back_as_given(monkeypatch, destination, chain, network) -> None:
     monkeypatch.setattr(gate, "_IS_WINDOWS", False)
-    fitted = transfers.explicit_address_hints(destination, chain=chain, network=network, environment="mainnet")
+    fitted = transfers.explicit_address_hints(destination, chain=chain, network=network, environment="mainnet",
+                                              request_text=COMPOSER_TEXT)
     assert ((fitted.chain, fitted.network), fitted.refusal) == ((chain, network), "")
 
 
