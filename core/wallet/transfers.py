@@ -129,6 +129,11 @@ def explicit_address_hints(destination: str, *, chain: str, network: str, enviro
     out_network = "" if network_was_environment else raw_network
     out_chain = "" if raw_chain.lower() in _ENVIRONMENT_WORDS else raw_chain
     family = _destination_family(destination)
+    if network_was_environment and not family:
+        # Composer retry on 6ca09fed (24 Nov): "send Testy 1 USDT" came with chain=ethereum, network=mainnet. For a
+        # contact name or id the chain beside an environment word is the model's guess too: dropped, so the resolver
+        # keeps the chains that carry the asset and the contact's saved wallet pins its own network.
+        out_chain = ""
     key = _CHAIN_HINTS.get(out_chain.lower(), out_chain.lower())
     if family and key:
         kinds = {spec.family for spec in chains.all_networks() if spec.chain_key == key}
