@@ -80,7 +80,7 @@ def _answer(model: Any, monkeypatch: pytest.MonkeyPatch, text: str) -> tuple[str
     ("Testy R072", OTHER),
     ("testy r072", OTHER),
     ("Testy R072 please", OTHER),
-    ("the second one, Testy R072", OTHER),
+    ("yes, that one: Testy R072", OTHER),
     ("Testy", STEVE_ROW_4),  # an exact name is that contact, never the longer name it starts
     (OTHER, OTHER),
     (f"send it to {STEVE_ROW_4}", STEVE_ROW_4),
@@ -93,8 +93,10 @@ def test_on_windows_naming_one_offered_contact_proposes_it_on_its_card(steves_te
     assert proposal.asset == "USDT"
     assert reply.startswith(WAITING) and "Nothing has been signed or sent yet." in reply, reply
     assert steves_testys.rounds == [], "the model was asked instead of the pick proposing"
-    # the one wallet call of the turn is the lane's own, by the picked contact's id, and it waits on the card
-    assert [(destination.startswith("ct-"), status) for destination, _t, _s, status in seen] == [(True, "pending_approval")], seen
+    # the one wallet call of the turn is the lane's own, by the picked contact's id (or, picked by address, that
+    # address's endpoint id), and it waits on the card
+    named = "ep-" if address in answer else "ct-"
+    assert [(destination.startswith(named), status) for destination, _t, _s, status in seen] == [(True, "pending_approval")], seen
 
 
 def test_on_windows_the_pick_answers_one_message_only(steves_testys, monkeypatch) -> None:
@@ -113,6 +115,16 @@ def test_on_windows_the_pick_answers_one_message_only(steves_testys, monkeypatch
     "Testy R072 5 USDT",  # a new amount is a new request
     STEVE_ROW_4[:20],  # part of an address
     "what were the two contacts called again, I think it was Testy R072 but I am not sure",  # more than a pick
+    "no, cancel Testy R072",  # a refusal never proposes
+    "don't send to Testy R072",
+    "not Testy R072, stop",
+    "the second one, Testy R072",  # a word that is not plain filler
+    "not Testy R072",
+    "don't pay Testy R072",
+    "Testy R072 is wrong",
+    "Testy R072's brother",
+    "who is Testy R072?",
+    "Testy R072?",  # a question is not a pick
 ))
 def test_on_windows_anything_but_one_full_pick_is_handled_as_before(steves_testys, monkeypatch, answer) -> None:
     _asked(steves_testys, monkeypatch)
@@ -168,7 +180,8 @@ def test_on_windows_a_proposal_later_in_the_asking_turn_clears_the_question(stev
 
 _CANDIDATES = (
     {"contact_id": "ct-testy", "display_name": "Testy", "values": STEVE_ROW_4},
-    {"contact_id": "ct-r072", "display_name": "Testy R072", "values": f"{OTHER}\x1f0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"},
+    {"contact_id": "ct-r072", "display_name": "Testy R072", "values": f"{OTHER}\x1f0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed",
+     "endpoint_ids": "ep-r072-sol\x1fep-r072-evm"},
 )
 
 
@@ -181,11 +194,62 @@ _CANDIDATES = (
     ("Testyx", None),
     ("Testy-R072", None),
     ("Testy and Testy R072", None),
+    ("please send it to Testy R072", "ct-r072"),
+    ("I mean Testy", "ct-testy"),
+    ("no", None),
+    ("no, Testy R072", None),
+    ("not Testy", None),
+    ("cancel Testy R072", None),
+    ("stop, Testy R072", None),
+    ("wait, Testy R072", None),
+    ("don't pay Testy", None),
+    ("Testy R072 is wrong", None),
+    ("the other one, not Testy", None),
+    ("Testy R072 instead", None),  # an unknown word
+    ("Testy R072 $5", None),
+    ("Testy R072 2", None),
     ("", None),
 ))
 def test_the_pick_is_one_full_name_or_address(text, picked) -> None:
     found = pick.picked_candidate(text, _CANDIDATES)
     assert (found or {}).get("contact_id") == picked
+
+
+@pytest.mark.parametrize(("text", "destination"), (
+    ("Testy R072", "ct-r072"),  # by name: the contact
+    (OTHER, "ep-r072-sol"),  # by address: that address's endpoint
+    ("0x5AAEB6053F3E94C9B9A09F33669435E7EF1BEAED", "ep-r072-evm"),
+    (STEVE_ROW_4, "ct-testy"),  # no endpoint id offered: the contact
+))
+def test_a_pick_by_address_names_its_endpoint(text, destination) -> None:
+    assert pick.picked_candidate(text, _CANDIDATES)["destination"] == destination
+
+
+@pytest.fixture
+def r072_with_two_addresses(solana_chat):
+    """Testy, and Testy R072 with two Solana addresses saved."""
+    from core.contacts import store
+    from tests.test_windows_073_contact_ambiguity import STRANGER
+
+    model, node = solana_chat
+    for address in (OTHER, STRANGER):
+        node.fund_sol(address, 5_000_000)
+        node.open_token_account(address, USDT_MINT)
+    store.create_contact(display_name="Testy", actor=store.ACTOR_OWNER,
+                         endpoints=[{"kind": "wallet", "value": STEVE_ROW_4, "network": SOLANA_MAINNET}])
+    store.create_contact(display_name="Testy R072", actor=store.ACTOR_OWNER,
+                         endpoints=[{"kind": "wallet", "value": OTHER, "network": SOLANA_MAINNET, "label": "main"},
+                                    {"kind": "wallet", "value": STRANGER, "network": SOLANA_MAINNET, "label": "spare"}])
+    return model
+
+
+def test_on_windows_a_pick_by_address_of_a_two_address_contact_proposes_that_address(r072_with_two_addresses, monkeypatch) -> None:
+    from tests.test_windows_073_contact_ambiguity import STRANGER
+
+    _asked(r072_with_two_addresses, monkeypatch)
+    reply, _seen = _answer(r072_with_two_addresses, monkeypatch, STRANGER)
+    assert [p.destination for p in _pending()] == [STRANGER], reply
+    assert reply.startswith(WAITING), reply
 
 
 def test_on_windows_the_asking_turn_cannot_read_its_own_question(monkeypatch) -> None:
