@@ -2303,6 +2303,20 @@ def handle_turn_frontdoor(
     if apple_notes_on_windows is not None:
         return {"result": apple_notes_on_windows}
 
+    # Windows: the person's answer to a wallet "which one?" that ended the last turn proposes the contact they named
+    # (approval card, nothing signed). Steve row 38 on 9e1eb4b4: the model answered "Got it" with no tool call.
+    if not action_forbidden:
+        from core.agent_runtime.fast_paths_contact_pick import maybe_handle_contact_pick
+
+        contact_pick = maybe_handle_contact_pick(
+            agent,
+            effective_input,
+            session_id=session_id,
+            source_context=source_context,
+        )
+        if contact_pick is not None:
+            return {"result": contact_pick}
+
     # The same on Windows for Apple Calendar, the Skill Codex and VOOL Drop, none of which runs there in
     # 0.7.2: the model had no tool for them and answered in prose (measured on Steve, 14 Nov).
     from core.agent_runtime.fast_paths_windows_unavailable import maybe_refuse_windows_unavailable
