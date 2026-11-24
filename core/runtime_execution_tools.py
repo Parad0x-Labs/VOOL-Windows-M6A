@@ -2826,6 +2826,84 @@ def _asked_about_resolved_recipient(snapshot: dict[str, Any], context: dict[str,
     return _held_recipient_question(tokens, context)
 
 
+#: Windows (0.7.3, Steve row 38 on 9e1eb4b4): the person's answer to a wallet "which one?", per chat. "send Testy 1 USDT"
+#: with two saved contacts (Testy, Testy R072) asked which one; the person answered "Testy R072" and the model replied in
+#: prose with no tool call, so a send to a contact whose name clashes could never finish. The question that ended a turn
+#: keeps the request (asset, amount, chain, network) and the offered recipients for the chat's NEXT message, which
+#: core.agent_runtime.fast_paths_contact_pick reads: a message naming exactly one of them proposes it (approval card,
+#: nothing signed); anything else is handled as before. Used once, cleared by a later proposal, gone after the TTL.
+_PENDING_RECIPIENT_CHOICES: dict[str, tuple[float, str, dict[str, Any], tuple[dict[str, str], ...]]] = {}
+_PENDING_CHOICE_ARGUMENTS = ("asset", "amount", "amount_minor", "chain", "network", "wallet_id", "memo")
+
+
+def _chat_and_turn(context: dict[str, Any] | None) -> tuple[str, str]:
+    from core import windows_write_gate
+    from core.faults.recorder import identity_from_context
+
+    if not windows_write_gate.active():
+        return "", ""
+    try:
+        turn, session = identity_from_context(context)
+    except Exception:
+        return "", ""
+    return str(session or ""), str(turn or "")
+
+
+def _remember_pending_recipient_choice(resolution: dict[str, Any], args: dict[str, Any], context: dict[str, Any] | None) -> None:
+    session, turn = _chat_and_turn(context)
+    if not session or not turn:
+        return
+    candidates: list[dict[str, str]] = []
+    for choice in resolution.get("choices") or ():
+        if not isinstance(choice, dict):
+            continue
+        contact_id = str(choice.get("contact_id") or "").strip()
+        name = str(choice.get("display_name") or "").strip()
+        if not contact_id or not name:
+            continue
+        # each address with the endpoint it belongs to, so a pick by address names that one endpoint
+        addresses: dict[str, str] = {}
+        for endpoint in [choice, *(choice.get("endpoints") or ())]:
+            value = str(endpoint.get("value") or "").strip() if isinstance(endpoint, dict) else ""
+            if value:
+                endpoint_id = str(endpoint.get("endpoint_id") or "").strip()
+                addresses[value] = addresses.get(value) or (endpoint_id if endpoint_id.startswith("ep-") else "")
+        candidates.append({"contact_id": contact_id, "display_name": name, "values": "\x1f".join(addresses),
+                           "endpoint_ids": "\x1f".join(addresses.values())})
+    if len(candidates) < 2:
+        return
+    request = {key: args[key] for key in _PENDING_CHOICE_ARGUMENTS if args.get(key) not in (None, "")}
+    with _RECIPIENT_QUESTIONS_LOCK:
+        _PENDING_RECIPIENT_CHOICES[session] = (
+            time.monotonic() + _RECIPIENT_QUESTION_TTL_SECONDS, turn, request, tuple(candidates))
+
+
+def _forget_pending_recipient_choice(context: dict[str, Any] | None) -> None:
+    session, _turn = _chat_and_turn(context)
+    if session:
+        with _RECIPIENT_QUESTIONS_LOCK:
+            _PENDING_RECIPIENT_CHOICES.pop(session, None)
+
+
+def take_pending_recipient_choice(context: dict[str, Any] | None) -> tuple[dict[str, Any], tuple[dict[str, str], ...]] | None:
+    """On Windows, the request and offered recipients of the "which one?" that ended this chat's last turn, removed as it
+    is read (it answers one message); None when there is none, it expired, or it was asked in this same turn."""
+    session, turn = _chat_and_turn(context)
+    if not session:
+        return None
+    with _RECIPIENT_QUESTIONS_LOCK:
+        held = _PENDING_RECIPIENT_CHOICES.get(session)
+        if held is None:
+            return None
+        until, asked_in, request, candidates = held
+        if turn and turn == asked_in:
+            return None  # the model's own next step in the asking turn is not the person's answer
+        del _PENDING_RECIPIENT_CHOICES[session]
+    if until <= time.monotonic():
+        return None
+    return dict(request), candidates
+
+
 def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: dict[str, Any] | None) -> RuntimeExecutionResult:
     """The model-facing wallet surface: status, propose, simulate, payment_status.
 
@@ -2934,6 +3012,7 @@ def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: d
                 }
                 if recipient_outcome.status == "recipient_ambiguous":
                     _remember_recipient_question(resolution, str(recipient_outcome.message or ""), context)
+                    _remember_pending_recipient_choice(resolution, args, context)
                 return RuntimeExecutionResult(
                     handled=True, ok=question, status=recipient_outcome.status,
                     response_text=f"{recipient_outcome.message} Nothing was proposed, signed or sent.",
@@ -2967,6 +3046,7 @@ def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: d
             from core.wallet import lifecycle
 
             prepared = lifecycle.default_lifecycle(source_context=context).prepare(proposal.proposal_id)
+            _forget_pending_recipient_choice(context)  # a proposal was made: no question is waiting on the person
             who = describe_snapshot(recipient) or prepared.destination
             text = (
                 f"Proposal {prepared.proposal_id}: {prepared.amount_minor} {prepared.asset} (minor units) to {who} on {prepared.network}. State: {prepared.state}.\n"
