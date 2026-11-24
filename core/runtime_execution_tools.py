@@ -2904,6 +2904,14 @@ def take_pending_recipient_choice(context: dict[str, Any] | None) -> tuple[dict[
     return dict(request), candidates
 
 
+def _turn_user_text(context: dict[str, Any] | None) -> str | None:
+    """The person's own message for this turn, verbatim (core.turn_contract.TurnRequest.user_text), or None when the
+    turn carries none (a direct or internal call), so a caller that needs it can fail closed."""
+    request = (context or {}).get("turn_request")
+    text = request.get("user_text") if isinstance(request, dict) else getattr(request, "user_text", None)
+    return text if isinstance(text, str) else None
+
+
 def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: dict[str, Any] | None) -> RuntimeExecutionResult:
     """The model-facing wallet surface: status, propose, simulate, payment_status.
 
@@ -2973,7 +2981,8 @@ def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: d
             if asked:
                 return _still_asked(asked)
             fitted = transfers.explicit_address_hints(str(args.get("destination") or ""), chain=str(args.get("chain") or ""),
-                                                      network=str(args.get("network") or ""))
+                                                      network=str(args.get("network") or ""),
+                                                      request_text=_turn_user_text(context))
             if fitted.refusal:
                 refused = fitted.status or "recipient_chain_mismatch"
                 said = f"{fitted.refusal} Nothing was proposed, signed or sent."

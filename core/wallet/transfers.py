@@ -7,6 +7,7 @@ row, or on any EVM row. Legacy SOL on Solana Devnet from a legacy wallet and x40
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from collections.abc import Iterator
@@ -107,7 +108,22 @@ class ExplicitAddressHints:
         self.chain, self.network, self.refusal, self.status = chain, network, refusal, status
 
 
-def explicit_address_hints(destination: str, *, chain: str, network: str, environment: str = "") -> ExplicitAddressHints:
+#: Windows (0.7.3, Chief of Staff and Security Review on be26d738): words with which a person names a chain. A chain the
+#: model passed beside "mainnet" for a contact is dropped only when the person's own message names none of these.
+_CHAIN_WORDS_RE = re.compile(
+    r"(?<![\w-])(?:solana|sol|spl|ethereum|ether|eth|erc-?20|base|bnb|bsc|binance|bep-?20|arbitrum|arb|robinhood|"
+    r"polygon|matic|optimism|avalanche|avax|tron|trc-?20|evm|ton|bitcoin|btc|zcash)(?![\w-])",
+    re.IGNORECASE,
+)
+
+
+def names_a_chain(text: str) -> bool:
+    """Whether a person's message names a chain or a chain alias ("on Ethereum", "USDT on sol", "erc20")."""
+    return bool(_CHAIN_WORDS_RE.search(str(text or "")))
+
+
+def explicit_address_hints(destination: str, *, chain: str, network: str, environment: str = "",
+                           request_text: str | None = None) -> ExplicitAddressHints:
     """Windows only (0.7.3, Steve row 4). An environment word in the network or the chain counts as unset. For an address
     given directly, its shape says the family (base58 is Solana, 0x is EVM): a chain of the other family is refused,
     unless it came with an environment word for the network, where it was guessed from that word and is dropped. The
@@ -129,10 +145,12 @@ def explicit_address_hints(destination: str, *, chain: str, network: str, enviro
     out_network = "" if network_was_environment else raw_network
     out_chain = "" if raw_chain.lower() in _ENVIRONMENT_WORDS else raw_chain
     family = _destination_family(destination)
-    if network_was_environment and not family:
+    if network_was_environment and not family and request_text is not None and not names_a_chain(request_text):
         # Composer retry on 6ca09fed (24 Nov): "send Testy 1 USDT" came with chain=ethereum, network=mainnet. For a
         # contact name or id the chain beside an environment word is the model's guess too: dropped, so the resolver
-        # keeps the chains that carry the asset and the contact's saved wallet pins its own network.
+        # keeps the chains that carry the asset and the contact's saved wallet pins its own network. Only when the
+        # person's own message names no chain: "send Testy 1 USDT on Ethereum" keeps it, and a contact with no wallet
+        # there is refused. With no message to read (request_text None) the chain is kept too: fail closed.
         out_chain = ""
     key = _CHAIN_HINTS.get(out_chain.lower(), out_chain.lower())
     if family and key:
