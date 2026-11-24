@@ -2904,6 +2904,14 @@ def take_pending_recipient_choice(context: dict[str, Any] | None) -> tuple[dict[
     return dict(request), candidates
 
 
+def _turn_user_text(context: dict[str, Any] | None) -> str | None:
+    """The person's own message for this turn, verbatim (core.turn_contract.TurnRequest.user_text), or None when the
+    turn carries none (a direct or internal call), so a caller that needs it can fail closed."""
+    request = (context or {}).get("turn_request")
+    text = request.get("user_text") if isinstance(request, dict) else getattr(request, "user_text", None)
+    return text if isinstance(text, str) else None
+
+
 def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: dict[str, Any] | None) -> RuntimeExecutionResult:
     """The model-facing wallet surface: status, propose, simulate, payment_status.
 
@@ -2957,20 +2965,24 @@ def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: d
             # Nothing is proposed for a guessed payee, and a saved address is only ever used on the network it was saved for.
             # Windows (0.7.3): "mainnet"/"testnet"/"devnet" name no chain or network, and an address given directly
             # says its own family; a chain guessed from "mainnet" for it is dropped, a contradicting one is refused.
-            def _still_asked() -> RuntimeExecutionResult:
-                # The question itself is not repeated: the turn's first answer already holds it, and the tool output
-                # shown when the model's follow-up fails joins every step's text (Steve, 725f22b2: the question twice).
+            def _still_asked(question: str) -> RuntimeExecutionResult:
+                # The question again, word for word as the turn's first answer gave it, then the note: a repeat the
+                # loop blocks ends the turn on this text, so it must carry the question (composer retry on 6ca09fed:
+                # only "I already asked..." was shown and the question was lost). The first answer is a prefix of this
+                # one, so the tool output joined after a failed follow-up shows it once (Steve, 725f22b2).
                 return RuntimeExecutionResult(
                     handled=True, ok=True, status="recipient_ambiguous",
-                    response_text="I already asked which saved contact you mean, so I won't pick one of their addresses myself. Nothing was proposed, signed or sent.",
+                    response_text=(f"{question} Nothing was proposed, signed or sent. I already asked which saved contact you "
+                                   "mean, so I won't pick one of their addresses myself."),
                     details={"observation": _tool_observation(intent=intent, tool_surface="wallet", ok=True, status="recipient_ambiguous")},
                 )
 
             asked = _asked_recipient_question(str(args.get("destination") or ""), context)
             if asked:
-                return _still_asked()
+                return _still_asked(asked)
             fitted = transfers.explicit_address_hints(str(args.get("destination") or ""), chain=str(args.get("chain") or ""),
-                                                      network=str(args.get("network") or ""))
+                                                      network=str(args.get("network") or ""),
+                                                      request_text=_turn_user_text(context))
             if fitted.refusal:
                 refused = fitted.status or "recipient_chain_mismatch"
                 said = f"{fitted.refusal} Nothing was proposed, signed or sent."
@@ -3023,7 +3035,7 @@ def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: d
             recipient = recipient_outcome.snapshots[0]
             asked = _asked_about_resolved_recipient(recipient, context)
             if asked:
-                return _still_asked()
+                return _still_asked(asked)
             pinned_network = str(recipient.get("chain_network") or "") if recipient.get("resolution") == "contact" else ""
             if pilot_path:
                 # the caller path: one account on one row in the active environment, the amount parsed exactly
