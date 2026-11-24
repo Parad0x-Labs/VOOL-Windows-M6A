@@ -171,7 +171,7 @@ def test_chain_hint(monkeypatch, word, windows, active, expected) -> None:
     (EVM, "solana", "testnet", ("", "")),
     (EVM, "base", "mainnet", ("base", "")),
     (EVM, "ethereum", "eip155:1", ("ethereum", "eip155:1")),
-    ("Testy", "ethereum", "mainnet", ("ethereum", "")),
+    ("Testy", "ethereum", "mainnet", ("", "")),
 ])
 def test_on_windows_explicit_address_hints_fit_the_address(monkeypatch, destination, chain, network, expected) -> None:
     monkeypatch.setattr(gate, "_IS_WINDOWS", True)
