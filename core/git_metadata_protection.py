@@ -243,6 +243,61 @@ def _protected_target(named: Path, top: Path) -> bool:
     return windows_write_gate.inside_flagged(str(named))
 
 
+def _global_config_files() -> list[Path]:
+    """The user's global git config files, as Git for Windows finds them (HOME, else USERPROFILE; XDG)."""
+    home = os.environ.get("HOME") or os.environ.get("USERPROFILE") or ""
+    found: list[Path] = []
+    if home:
+        found.append(Path(home) / ".gitconfig")
+    xdg = os.environ.get("XDG_CONFIG_HOME") or ""
+    if xdg:
+        found.append(Path(xdg) / "git" / "config")
+    elif home:
+        found.append(Path(home) / ".config" / "git" / "config")
+    return found
+
+
+def _cut_comment(raw: str) -> str | None:
+    """A config value as git reads it: cut at the first `;` or `#` outside double quotes, quotes dropped, `\\x`
+    kept as written. None (refuse) for a value continued on the next line or a quote left open."""
+    out: list[str] = []
+    quoted = False
+    index = 0
+    while index < len(raw):
+        char = raw[index]
+        if char == "\\":
+            if index + 1 >= len(raw):
+                return None
+            out.append(raw[index:index + 2])
+            index += 2
+            continue
+        if char == '"':
+            quoted = not quoted
+        elif char in ";#" and not quoted:
+            break
+        else:
+            out.append(char)
+        index += 1
+    else:
+        if quoted:
+            return None
+    return "".join(out).strip()
+
+
+_WINDOWS_PROGRAM_SUFFIXES = (".com", ".exe", ".bat", ".cmd")
+
+
+def _program_spellings(named: Path) -> list[Path]:
+    """The files Windows may run for a command word: as written and, for a word without a suffix, with each
+    PATHEXT suffix (CreateProcess and Git for Windows' sh add them)."""
+    if named.suffix:
+        return [named]
+    suffixes = {suffix.casefold() for suffix in _WINDOWS_PROGRAM_SUFFIXES}
+    suffixes.update(part.strip().casefold() for part in os.environ.get("PATHEXT", "").split(";")
+                    if part.strip().startswith("."))
+    return [named, *(named.with_name(named.name + suffix) for suffix in sorted(suffixes))]
+
+
 def _local_targets(top: Path) -> tuple[list[Path], list[Path]] | None:
     """Windows port: (hooks folders, files) as `_redirect_targets` gives them, read from the repository's own config.
 
@@ -259,6 +314,9 @@ def _local_targets(top: Path) -> tuple[list[Path], list[Path]] | None:
         # git reads config.worktree when extensions.worktreeConfig is on; read it whenever it is there (more is
         # protected, never less).
         queue.append(worktree_config)
+    # The user's own global settings apply to every repository (a global core.hooksPath = .githooks is common).
+    # One that is not there names nothing; the system config is not read (a 0.7.7 item).
+    queue.extend(path for path in _global_config_files() if path.is_file())
     hooks: list[Path] = []
     files: list[Path] = [worktree_config] if worktree_config is not None else []
     seen: set[str] = set()
@@ -272,7 +330,7 @@ def _local_targets(top: Path) -> tuple[list[Path], list[Path]] | None:
         seen.add(key_seen)
         files.append(config)
         try:
-            text = config.read_text(encoding="utf-8", errors="replace") if config.exists() else ""
+            text = config.read_text(encoding="utf-8-sig", errors="replace") if config.exists() else ""
         except OSError:
             return None
         section = ""
@@ -290,11 +348,9 @@ def _local_targets(top: Path) -> tuple[list[Path], list[Path]] | None:
             entry = _ENTRY.match(line)
             if entry is None or not section:
                 return None
-            value = (entry.group(2) or "").strip()
-            if value.endswith("\\"):
-                return None  # a value continued on the next line: not placed here, refuse
-            if len(value) >= 2 and value[0] == value[-1] == '"':
-                value = value[1:-1]
+            value = _cut_comment(entry.group(2) or "")
+            if value is None:
+                return None  # a value continued on the next line, or an open quote: not placed here, refuse
             key = (section + "." + entry.group(1)).casefold()
             if not value:
                 continue
@@ -311,8 +367,9 @@ def _local_targets(top: Path) -> tuple[list[Path], list[Path]] | None:
                         continue
                     named = Path(token).expanduser()
                     named = named if named.is_absolute() else top / named
-                    if _protected_target(named, top):
-                        files.append(named)
+                    for program in _program_spellings(named):
+                        if _protected_target(program, top):
+                            files.append(program)
     return hooks, files
 
 
