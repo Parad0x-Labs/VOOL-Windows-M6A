@@ -196,8 +196,13 @@ def _redirect_targets(top: Path) -> tuple[list[Path], list[Path]] | None:
     return result
 
 
-def _local_config_file(top: Path) -> Path | None:
-    """The repository's own config file (found without git); None when the `.git` pointer cannot be read."""
+def _local_config_files(top: Path) -> tuple[list[Path], Path | None] | None:
+    """(config files to read first, a linked worktree's own config.worktree) found without git, as git finds them.
+
+    A `.git` file points at the git directory; a linked worktree's git directory holds a `commondir` file that names
+    the repository's own folder, whose `config` is the one git reads (plus the worktree's `config.worktree` when
+    extensions.worktreeConfig is on). None (refuse) when a pointer cannot be read or the config it leads to is
+    missing: a missing file must never read as "no settings"."""
     entry = top / ".git"
     try:
         if entry.is_file():
@@ -205,8 +210,19 @@ def _local_config_file(top: Path) -> Path | None:
             if not pointer.lower().startswith("gitdir:"):
                 return None
             gitdir = Path(pointer.split(":", 1)[1].strip())
-            return (gitdir if gitdir.is_absolute() else top / gitdir) / "config"
-        return entry / "config"
+            gitdir = gitdir if gitdir.is_absolute() else top / gitdir
+        else:
+            gitdir = entry
+        common = gitdir
+        commondir = gitdir / "commondir"
+        if commondir.is_file():
+            named = Path(commondir.read_text(encoding="utf-8", errors="replace").strip())
+            common = named if named.is_absolute() else gitdir / named
+        config = common / "config"
+        if not config.is_file():
+            return None
+        worktree = gitdir / "config.worktree" if common != gitdir else common / "config.worktree"
+        return [config], worktree
     except OSError:
         return None
 
@@ -216,10 +232,15 @@ _ENTRY = re.compile(r"^([A-Za-z][A-Za-z0-9-]*)\s*(?:=\s*(.*))?$")
 _MAX_INCLUDES = 16
 
 
-def _in_tree(named: Path, top: Path) -> bool:
+def _protected_target(named: Path, top: Path) -> bool:
+    """A file a program setting names that file tools could reach: in this tree, or in any folder the Windows
+    write gate has marked (a script in another marked workspace is git's to run just the same)."""
     with contextlib.suppress(OSError, ValueError):
-        return named.resolve() == top.resolve() or top.resolve() in named.resolve().parents
-    return False
+        if named.resolve() == top.resolve() or top.resolve() in named.resolve().parents:
+            return True
+    from core import windows_write_gate
+
+    return windows_write_gate.inside_flagged(str(named))
 
 
 def _local_targets(top: Path) -> tuple[list[Path], list[Path]] | None:
@@ -230,12 +251,17 @@ def _local_targets(top: Path) -> tuple[list[Path], list[Path]] | None:
     the way git's parser splits section, subsection and key: core.hooksPath, include paths, and each word of a program
     setting's command line, as `_redirect_targets` takes them. None (refuse) when a file cannot be read, a line cannot
     be placed, or includes go deeper than _MAX_INCLUDES."""
-    first = _local_config_file(top)
-    if first is None:
+    found = _local_config_files(top)
+    if found is None:
         return None
+    queue, worktree_config = found
+    if worktree_config is not None and worktree_config.is_file():
+        # git reads config.worktree when extensions.worktreeConfig is on; read it whenever it is there (more is
+        # protected, never less).
+        queue.append(worktree_config)
     hooks: list[Path] = []
-    files: list[Path] = []
-    queue, seen = [first], set()
+    files: list[Path] = [worktree_config] if worktree_config is not None else []
+    seen: set[str] = set()
     while queue:
         config = queue.pop()
         if len(seen) >= _MAX_INCLUDES:
@@ -285,7 +311,7 @@ def _local_targets(top: Path) -> tuple[list[Path], list[Path]] | None:
                         continue
                     named = Path(token).expanduser()
                     named = named if named.is_absolute() else top / named
-                    if _in_tree(named, top):
+                    if _protected_target(named, top):
                         files.append(named)
     return hooks, files
 
@@ -306,7 +332,10 @@ def _redirect_refusal(candidate: Path, forms: list[Path], top: Path) -> str:
         if targets is None:
             return (f"{REFUSAL_PREFIX}: VOOL could not read the settings of the repository at `{top}`, so "
                     f"`{candidate}` was not written; nothing was touched.")
-    hooks, files = targets
+    return _target_refusal(candidate, forms, *targets)
+
+
+def _target_refusal(candidate: Path, forms: list[Path], hooks: list[Path], files: list[Path]) -> str:
     for target in forms:
         for folder in hooks:
             for folder_form in _forms(folder):
@@ -337,6 +366,36 @@ def refusal(path: str | Path) -> str:
         reason = _redirect_refusal(candidate, forms, top)
         if reason:
             return reason
+    return _marked_repositories_refusal(candidate, forms, set(tops))
+
+
+def _marked_repositories_refusal(candidate: Path, forms: list[Path], checked: set[str]) -> str:
+    """Windows port: a program setting of a repository in one marked folder may name a script in another one.
+
+    The check above asks only the repository the written file sits in. Where git never runs (Windows), the
+    repositories at the marked folders (the folder itself, or the repository holding it) are asked too, so a
+    script one of them would run is refused wherever it lies."""
+    from core import safe_git, windows_write_gate
+
+    if not safe_git.git_refused_here():
+        return ""
+    try:
+        roots = windows_write_gate.flagged_roots()
+    except Exception:  # an unknown state flags nothing, and nothing is written there either
+        return ""
+    for root in roots:
+        folder = Path(root)
+        top = folder if os.path.lexists(folder / ".git") else _worktree_top(folder / "_")
+        if top is None or str(top) in checked:
+            continue
+        checked.add(str(top))
+        # Only what that repository names is matched here; its hooks-folder or include rule refuses writes inside
+        # it (above), not everywhere. A repository whose settings cannot be read names nothing to match.
+        targets = _local_targets(top)
+        if targets is not None:
+            reason = _target_refusal(candidate, forms, *targets)
+            if reason:
+                return reason
     return ""
 
 
