@@ -300,7 +300,9 @@ def test_the_shipped_feed_checks_on_its_own_once_online_is_on_and_never_before(t
     from core.updater.feed import load_feed_config
     from core.updater.runtime import UpdateSubsystem
 
-    shipped = load_feed_config(env={})
+    # Windows port: the subsystem below is the Mac edition, so read the Mac block of the shipped file on any host
+    # (on Windows the windows-x64 block keeps auto_check off until Loop's Windows key is pinned).
+    shipped = load_feed_config(env={}, platform="macos-arm64")
     assert shipped.source == "config" and shipped.manifest_url.startswith("https://github.com/")
     private, public = generate_publisher_keypair()
     document, _ = build_manifest(private_hex=private, version="0.7.1", channel=shipped.channel)

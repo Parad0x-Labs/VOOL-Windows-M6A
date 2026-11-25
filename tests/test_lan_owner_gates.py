@@ -37,6 +37,7 @@ def _isolated_home(tmp_path, monkeypatch):
 
     monkeypatch.setenv("VOOL_HOME", str(tmp_path / "vool"))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))  # Windows port: "~" reads USERPROFILE there
     (tmp_path / "home").mkdir()
     previous = runtime_paths._VOOL_HOME_OVERRIDE
     configure_runtime_home(tmp_path / "vool")
