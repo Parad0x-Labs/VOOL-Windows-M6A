@@ -61,8 +61,11 @@ def holding_provider():
 
 
 def test_a_paid_call_stopped_in_flight_ends_at_once_and_is_held_as_billing_ambiguous(
-    anthropic_lane, holding_provider, monkeypatch
+    anthropic_lane, holding_provider, monkeypatch, windows_cloud_opted_in
 ) -> None:
+    # windows_cloud_opted_in (tests/_windows_cloud_optin.py): this row drives a BYOK lane on a
+    # loopback wire to pin the stop's billing hold, not the key or the consent. On Windows the cloud
+    # gate otherwise refuses the pick before any POST; off Windows the gate is open anyway.
     from core.runtime_task_events import (
         new_runtime_event_stream_id,
         register_runtime_event_sink,

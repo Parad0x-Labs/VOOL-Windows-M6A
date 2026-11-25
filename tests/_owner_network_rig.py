@@ -37,12 +37,16 @@ def install_fixture_network():
     config = json.loads(os.environ["VOOL_OWNER_NETWORK_FIXTURE"])
     ports = {int(config[key]) for key in ("model_port", "search_port", "api_port")}
     hosts = {"127.0.0.1", "localhost", PUBLIC_HOST, PUBLIC_ADDRESS, config["lan_ip"]}
+    # The daemon's own --bind address. On Windows the listen policy resolves it with
+    # socket.getaddrinfo before binding (network/listen_policy.py); POSIX asyncio skips that
+    # call for a numeric host. It resolves here but stays out of `hosts`: never a destination.
+    bind_hosts = {"0.0.0.0"}
     resolve, connect = socket.getaddrinfo, socket.socket.connect
 
     def dns(host, port, *args, **kwargs):
         if str(host) == PUBLIC_HOST:
             return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (PUBLIC_ADDRESS, int(port))) ]
-        if str(host) not in hosts:
+        if str(host) not in hosts and str(host) not in bind_hosts:
             raise socket.gaierror("fixture DNS refuses an unowned host")
         return resolve(host, port, *args, **kwargs)
 

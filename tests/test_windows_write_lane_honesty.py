@@ -90,7 +90,7 @@ def _served(machine: dict[str, Path], tmp_path: Path, monkeypatch: pytest.Monkey
         response = _dispatch_post(
             path="/api/chat", body=body, headers={"content-type": "application/json"},
             runtime=RuntimeServices(display_name="VOOL", agent=agent), model_name="vool",
-            workspace_root_provider=lambda: str(machine["workspace"]),
+            workspace_root_provider=lambda: str(machine["workspace"]), client_host="127.0.0.1",
         )
         raw = b"".join(response.stream or ())
     finally:

@@ -512,7 +512,11 @@ class _LocalOllama:
     the provider unchanged: what extraction is handed still lands in ``provider.calls``.
     """
 
-    TAGS = {"models": [{"name": "local-extractor:latest", "details": {"families": ["llama"]}}]}
+    # The extractor's own model is listed too: on Windows the extractor posts only when the endpoint
+    # lists THAT model (core.fact_extractor, the 0.7.1 port's missing-model skip); elsewhere any
+    # listed chat model is enough.
+    TAGS = {"models": [{"name": "local-extractor:latest", "details": {"families": ["llama"]}},
+                       {"name": "qwen3:0.6b", "details": {"families": ["qwen3"]}}]}
 
     def __init__(self, upstream: str) -> None:
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer

@@ -138,7 +138,7 @@ class _Chat:
 
             response = _dispatch_post(
                 path="/api/chat", body=body, headers={"content-type": "application/json"}, runtime=self.runtime,
-                model_name="vool", workspace_root_provider=lambda: str(self.desktop),
+                model_name="vool", workspace_root_provider=lambda: str(self.desktop), client_host="127.0.0.1",
             )
             raw = b"".join(response.stream or ())
             assert response.status == 200
