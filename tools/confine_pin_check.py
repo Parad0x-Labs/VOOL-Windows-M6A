@@ -54,6 +54,7 @@ def main(argv: list[str] | None = None) -> int:
     root = args.work / "copy"
     app = root / "app"
     app.mkdir(parents=True)
+    pin.install_marker(app).write_text("VOOL installed app folder", encoding="ascii")   # a copy of the install
     copy_folder = root / "broker" / pin.FOLDER_NAME
     copy_pin = root / "config" / pin.PIN_NAME
     shutil.copytree(folder, copy_folder)

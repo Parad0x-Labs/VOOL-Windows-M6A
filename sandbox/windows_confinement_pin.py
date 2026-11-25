@@ -49,27 +49,41 @@ INSTALL_MARKER_NAME = ".vool-install"
 
 
 def install_marker(project_root: Path) -> Path:
-    """Where a future install marker goes: inside `{app}\\app` itself, never in `{app}` or above.
+    """The install marker: inside `{app}\\app` itself, never in `{app}` or above.
 
-    Not consulted yet. The parent of an app root is exactly the folder that cannot be trusted for a
-    checkout (see `launcher_locations`), so a marker there would prove nothing."""
+    The parent of an app root is exactly the folder that cannot be trusted for a checkout (see
+    `launcher_locations`), so a marker there would prove nothing. The bundle build writes it into
+    the staged app folder (installer/bundle/build_bundle.ps1), so the installer and every update
+    payload carry it; a checkout never has it (it is not in the repository)."""
     return project_root / INSTALL_MARKER_NAME
+
+
+def is_installed_app_root(project_root: Path) -> bool:
+    """Whether `project_root` is the installed `{app}\\app`: absolute, named `app`, and holding the
+    install marker as a plain file (not a link or other reparse point). Only then may its parent's
+    broker, launcher and pin be used (E2-seams-08#1: a checkout cloned as C:\\app has C:\\ as its
+    parent, a folder other accounts can write to)."""
+    if not project_root.is_absolute() or project_root.name.casefold() != INSTALLED_APP_NAME:
+        return False
+    try:
+        st = os.lstat(install_marker(project_root))
+    except OSError:
+        return False
+    return stat.S_ISREG(st.st_mode) and not _is_link_or_reparse(st)
 
 
 def launcher_locations(project_root: Path) -> tuple[tuple[Path, Path], ...]:
     """(confine folder, pin file) pairs, installed first.
 
     `project_root` is the app root: `{app}\\app` when installed, the repository root in a checkout.
-    Only an absolute app root named `app` (the installed layout) probes its parent: a checkout's
-    parent can be a folder other accounts write to (a clone at C:\\vool has C:\\ as parent), and a
-    launcher and pin from there would verify each other. Any other root, and any relative root
-    (whose parent would be the current folder), yields only the checkout pair.
-
-    This is decided by the folder name alone, so a checkout cloned as C:\\app still probes C:\\
-    (E2-seams-08#1 stays open for that case until an install marker inside `{app}\\app` proves it)."""
+    Only the installed layout probes its parent: an absolute app root named `app` that holds the
+    install marker (`is_installed_app_root`). A checkout's parent can be a folder other accounts
+    write to (a clone at C:\\vool, or at C:\\app, has C:\\ as parent), and a launcher and pin from
+    there would verify each other. Any other root, a relative root (whose parent would be the
+    current folder), and an `app` folder without the marker yield only the checkout pair."""
     checkout = project_root / "windows" / "broker" / "publish"
     checkout_pair = (checkout / FOLDER_NAME, checkout / PIN_NAME)
-    if not project_root.is_absolute() or project_root.name.casefold() != INSTALLED_APP_NAME:
+    if not is_installed_app_root(project_root):
         return (checkout_pair,)
     installed = project_root.parent
     return (

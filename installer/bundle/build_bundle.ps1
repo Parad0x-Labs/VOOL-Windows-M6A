@@ -163,6 +163,10 @@ foreach ($relativePath in @("README.md", "docs\SYSTEM_SPINE.md", "docs\STATUS.md
 }
 # drop bytecode caches to keep the bundle clean
 Get-ChildItem $appDir -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+# The install marker (sandbox/windows_confinement_pin.py install_marker): inside {app}\app, so only an
+# installed app folder -- never a checkout cloned as "app" -- uses the broker, launcher and pin in its
+# parent folder. The installer and every update payload are built from this stage, so both carry it.
+Set-Content -LiteralPath (Join-Path $appDir ".vool-install") -Value "VOOL installed app folder" -Encoding ascii -NoNewline
 
 # A bundle has no .git directory at runtime. Stamp the exact source revision into the staged app
 # so /healthz, /api/runtime/version, and the chat footer can distinguish this installer from an

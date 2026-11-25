@@ -84,13 +84,13 @@ def _is_windows() -> bool:
 def broker_executable(project_root: Path) -> Path | None:
     """The broker beside the installed app ({app}\\broker), or the one a checkout published.
 
-    Only an absolute app root named `app` probes its parent, the same rule as
-    sandbox.windows_confinement_pin.launcher_locations: a checkout's parent can be a folder other
-    accounts write to, so any other or relative root gets only its own published broker."""
-    from sandbox.windows_confinement_pin import INSTALLED_APP_NAME
+    Only the installed app root (absolute, named `app`, holding the install marker) probes its
+    parent, the same rule as sandbox.windows_confinement_pin.launcher_locations: a checkout's parent
+    can be a folder other accounts write to, so any other root gets only its own published broker."""
+    from sandbox.windows_confinement_pin import is_installed_app_root
 
     candidates = [project_root / "windows" / "broker" / "publish" / "VoolBroker.exe"]
-    if project_root.is_absolute() and project_root.name.casefold() == INSTALLED_APP_NAME:
+    if is_installed_app_root(project_root):
         candidates.insert(0, project_root.parent / "broker" / "VoolBroker.exe")
     for candidate in candidates:
         if candidate.is_file():
