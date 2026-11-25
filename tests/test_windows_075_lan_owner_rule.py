@@ -245,3 +245,71 @@ def test_on_windows_a_home_reached_through_a_link_to_a_folder_still_pairs(window
     bridge = dbr.DiscordBridge()
     assert bridge.owner_user_id is None
     assert bridge._authorize("111") is True
+
+
+def _dir_link(link: Path, target: Path) -> None:
+    """A junction on Windows (no privilege needed), a directory symlink elsewhere."""
+    import os
+
+    if os.name == "nt":
+        import _winapi
+
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        link.symlink_to(target, target_is_directory=True)
+
+
+def test_on_windows_a_config_folder_that_is_a_link_refuses_everyone_even_when_it_resolves(windows, home) -> None:
+    """Chief of Staff, 25 Nov: config\\ that is a link or junction is an unknown, even with a valid owner
+    file behind it."""
+    elsewhere = home.parent / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "discord_bridge.json").write_text(json.dumps({"owner_user_id": "111"}), encoding="utf-8")
+    home.mkdir()
+    _dir_link(home / "config", elsewhere)
+    bridge = dbr.DiscordBridge()
+    assert bridge.owner_user_id is dbr._OWNER_UNREADABLE
+    assert bridge._authorize("111") is False
+    assert bridge._authorize("222") is False
+
+
+def _lstat_says_link(monkeypatch, target: Path) -> None:
+    """os.lstat of `target` answers a symbolic link, as Windows does for a dangling or live link."""
+    import os
+    import stat as stat_module
+
+    real_lstat = os.lstat
+
+    def lstat(path, *args, **kwargs):
+        if Path(path) == target:
+            return os.stat_result((stat_module.S_IFLNK | 0o777, 0, 0, 1, 0, 0, 0, 0, 0, 0))
+        return real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(dbr.os, "lstat", lstat)
+
+
+def test_on_windows_a_dangling_link_where_config_should_be_refuses_everyone(windows, home, monkeypatch) -> None:
+    """Chief of Staff, 25 Nov: the case SA and IM logged for 0.7.6, closed here."""
+    home.mkdir()
+    _lstat_says_link(monkeypatch, dbr._owner_file().parent)
+    bridge = dbr.DiscordBridge()
+    assert bridge.owner_user_id is dbr._OWNER_UNREADABLE
+    assert bridge._authorize("222") is False
+
+
+def test_on_windows_an_owner_file_that_is_a_link_refuses_everyone(windows, home, monkeypatch) -> None:
+    dbr._owner_file().parent.mkdir(parents=True)
+    dbr._owner_file().write_text(json.dumps({"owner_user_id": "111"}), encoding="utf-8")
+    _lstat_says_link(monkeypatch, dbr._owner_file())
+    bridge = dbr.DiscordBridge()
+    assert bridge.owner_user_id is dbr._OWNER_UNREADABLE
+    assert bridge._authorize("111") is False
+
+
+def test_on_windows_a_real_config_folder_and_owner_file_still_name_the_owner(windows, home) -> None:
+    dbr._owner_file().parent.mkdir(parents=True)
+    dbr._owner_file().write_text(json.dumps({"owner_user_id": "111"}), encoding="utf-8")
+    bridge = dbr.DiscordBridge()
+    assert bridge.owner_user_id == "111"
+    assert bridge._authorize("111") is True
+    assert bridge._authorize("222") is False
