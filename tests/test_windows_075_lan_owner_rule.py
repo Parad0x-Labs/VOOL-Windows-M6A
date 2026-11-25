@@ -185,3 +185,63 @@ def test_on_windows_no_owner_file_at_all_still_pairs_the_first_user(windows, hom
     assert bridge.owner_user_id is None
     assert bridge._authorize("111") is True
     assert bridge._authorize("222") is False
+
+
+def _windows_not_found(monkeypatch, *, lstat_finds_something: bool) -> None:
+    """os.stat of the owner path answers FileNotFoundError, as Windows does for a dangling link and for
+    a path through a file (ERROR_PATH_NOT_FOUND); os.lstat finds the link itself when there is one."""
+    import os
+
+    path = dbr._owner_file()
+    real_stat, real_lstat = os.stat, os.lstat
+
+    def stat(target, *args, **kwargs):
+        if Path(target) == path:
+            raise FileNotFoundError(2, "The system cannot find the path specified", str(target))
+        return real_stat(target, *args, **kwargs)
+
+    def lstat(target, *args, **kwargs):
+        if Path(target) == path:
+            if lstat_finds_something:
+                return real_stat(path.parent)
+            raise FileNotFoundError(2, "The system cannot find the path specified", str(target))
+        return real_lstat(target, *args, **kwargs)
+
+    monkeypatch.setattr(dbr.os, "stat", stat)
+    monkeypatch.setattr(dbr.os, "lstat", lstat)
+
+
+def test_on_windows_a_dangling_link_at_the_owner_file_refuses_everyone(windows, home, monkeypatch) -> None:
+    """Security Review, 25 Nov: a dangling link stats as not found, but something is there."""
+    dbr._owner_file().parent.mkdir(parents=True)
+    _windows_not_found(monkeypatch, lstat_finds_something=True)
+    bridge = dbr.DiscordBridge()
+    assert bridge.owner_user_id is dbr._OWNER_UNREADABLE
+    assert bridge._authorize("222") is False
+
+
+def test_on_windows_a_file_in_place_of_config_refuses_everyone_as_windows_reports_it(windows, home, monkeypatch) -> None:
+    """Security Review, 25 Nov: Windows reports a path through a file as not found, not ENOTDIR."""
+    home.mkdir(parents=True)
+    (home / "config").write_text("not a folder\n", encoding="utf-8")
+    _windows_not_found(monkeypatch, lstat_finds_something=False)
+    bridge = dbr.DiscordBridge()
+    assert bridge.owner_user_id is dbr._OWNER_UNREADABLE
+    assert bridge._authorize("222") is False
+
+
+def test_on_windows_a_home_reached_through_a_link_to_a_folder_still_pairs(windows, home, monkeypatch) -> None:
+    """The nearest folder above is judged followed, so a linked home is not taken for a file."""
+    import os
+
+    real = home.parent / "real-home"
+    real.mkdir()
+    try:
+        home.symlink_to(real, target_is_directory=True)
+    except OSError:
+        # No symlink privilege (Windows without developer mode): a plain folder home, the same answer.
+        home.mkdir()
+    assert os.path.isdir(home)
+    bridge = dbr.DiscordBridge()
+    assert bridge.owner_user_id is None
+    assert bridge._authorize("111") is True
