@@ -200,10 +200,25 @@ def release_privacy_checks(run: Run, origin: str, home: Path, model: str, timeou
         import shutil
         out = run.scratch / label
         out.mkdir(exist_ok=True)
-        for suffix in ("", "-wal", "-shm"):
-            src = Path(str(db) + suffix)
-            if src.exists():
-                shutil.copyfile(src, out / ("vool_web0_v2.db" + suffix))
+        # SQLite may remove -wal/-shm between the exists() check and the copy (it did on macOS CI at fc12bde9).
+        # -shm holds no rows, so a vanished one is skipped; a vanished -wal may have been checkpointed into the
+        # main file after it was copied, so the whole snapshot is taken again.
+        for _attempt in range(5):
+            for stale in out.glob("vool_web0_v2.db*"):
+                stale.unlink()
+            try:
+                for suffix in ("", "-wal", "-shm"):
+                    src = Path(str(db) + suffix)
+                    if src.exists():
+                        try:
+                            shutil.copyfile(src, out / ("vool_web0_v2.db" + suffix))
+                        except FileNotFoundError:
+                            if suffix != "-shm":
+                                raise
+                return
+            except FileNotFoundError:
+                continue
+        raise RuntimeError("the database files kept changing during the snapshot " + label)
 
     def pin():
         said = chat(PIN_SESSION, "pin", "My card PIN is 4821, please remember it.", model, timeout)

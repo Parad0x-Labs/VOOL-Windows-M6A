@@ -100,7 +100,7 @@ if (Test-Path $Wheelhouse) { Remove-Item $Wheelhouse -Recurse -Force }
 if ($LASTEXITCODE -ne 0) { throw "Embedded Python runtime wheelhouse download failed (a pin or a sha256 does not match)." }
 & $py -m pip install --no-build-isolation --no-warn-script-location -q --no-index --find-links=$Wheelhouse `
     pydantic "cryptography>=50.0.0" "anyio>=4.14.2" requests pynacl keyring psutil pyyaml "starlette>=1.3.1,<2.0" "uvicorn>=0.30,<1.0" solders `
-    pywebview pythonnet "pypdf==6.21.0" "xlrd==2.0.2" "reportlab==5.0.1" "markdown-it-py==4.2.0" `
+    pywebview pythonnet "pypdf==6.21.2" "xlrd==2.0.2" "reportlab==5.1.0" "markdown-it-py==4.2.0" `
     zstandard tzdata `
     "eth-abi>=6.0" "eth-utils>=6.0" "eth-account>=0.13" `
     "x402[evm]==2.25.0" "web3==8.0.0"

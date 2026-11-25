@@ -127,7 +127,7 @@ def test_the_sessions_endpoint_hands_the_mode_back() -> None:
     _chat(_A)
     entries._set_session_mode(_A, "review_edits")
     response = dispatch_get(path="/api/chat/sessions", query={}, runtime=RuntimeServices(display_name="VOOL"),
-                            model_name="vool")
+                            model_name="vool", client_host="127.0.0.1")
     status, body = _status_and_body(response)
     assert status == 200
     assert next(row for row in body["sessions"] if row["session_id"] == _A)["mode"] == "review_edits"
@@ -214,7 +214,7 @@ def test_the_commands_endpoint_serves_the_help_table() -> None:
     from core.slash_commands import WORKING_SLASH_COMMANDS
 
     response = dispatch_get(path="/api/chat/commands", query={}, runtime=RuntimeServices(display_name="VOOL"),
-                            model_name="vool")
+                            model_name="vool", client_host="127.0.0.1")
     status, body = _status_and_body(response)
     assert status == 200
     assert [(c["command"], c["description"]) for c in body["commands"]] == list(WORKING_SLASH_COMMANDS)

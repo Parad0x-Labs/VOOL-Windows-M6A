@@ -928,6 +928,7 @@
     "run.review_action": "नीचे दी गई सटीक क्रिया की समीक्षा करें।",
     "run.status_completed": "पूर्ण",
     "run.status_stopped": "रुका हुआ",
+    "run.status_stopping": "रोका जा रहा है…",
     "run.status_waiting": "आपकी स्वीकृति की प्रतीक्षा",
     "run.stop": "रोकें",
     "run.stop_title": "यह मोड़ रोकें — आपकी मशीन पर चल रहे कार्य को रद्द करता है और उत्तर को रोकता है।",
@@ -2865,6 +2866,7 @@
     "chat_export.withheld_count": "{n, plural, one {निजता नियमों के कारण {n} जवाब शामिल नहीं है।} other {निजता नियमों के कारण {n} जवाब शामिल नहीं हैं।}}",
     "online_access.open_setting": "“अपने आप ऑनलाइन जाना” खोलें",
     "update.online_off": "ऑनलाइन पहुँच बंद है, इसलिए VOOL अपडेट नहीं जाँचता।",
+    "update.checks_off": "अपडेट जाँच बंद",
     "vcs.online_off": "ऑनलाइन पहुँच बंद है, इसलिए VOOL इंटरनेट से कैलेंडर नहीं पढ़ता। इस कंप्यूटर के कैलेंडर काम करते रहते हैं।",
     "chat.no_model.line_text": "जवाब देने से पहले VOOL को एक AI मॉडल चाहिए। इसे सेट करने में लगभग दो मिनट लगते हैं।",
     "chat.no_model.reply_body": "सेटअप में लगभग दो मिनट लगते हैं: सेटअप खोलें और चुनें कि VOOL कहाँ सोचे। अगर इस कंप्यूटर पर पहले से कोई मॉडल ऐप है, जैसे Ollama, तो उसे खोलें और फिर से पूछें।",
@@ -2912,7 +2914,7 @@
     "settings.row.live_browser.help": "हर कार्रवाई चलने से पहले जाँचें। पेज की स्क्रिप्ट बंद हैं। भुगतान के लिए वॉलेट इस्तेमाल करें।",
     "settings.row.live_browser.label": "ब्राउज़र"
   },
-  "source_catalog_sha256": "3cd1e12e773d8973743f0c662f74ecd14ad16cdcf25eacadaf60c3100639cf8d",
+  "source_catalog_sha256": "3dc0c0c6f48b71bc267e104a8c250ead42748619d22b729bb07b2e00f43980fa",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

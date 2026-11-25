@@ -928,6 +928,7 @@
     "run.review_action": "以下の正確な操作を確認してください。",
     "run.status_completed": "完了",
     "run.status_stopped": "停止しました",
+    "run.status_stopping": "停止しています…",
     "run.status_waiting": "承認を待っています",
     "run.stop": "停止",
     "run.stop_title": "このターンを停止 — このマシンで実行中のタスクをキャンセルし、回答を止めます。",
@@ -2865,6 +2866,7 @@
     "chat_export.withheld_count": "{n, plural, other {プライバシーのルールにより、{n} 件の回答は含まれていません。}}",
     "online_access.open_setting": "「自動でオンラインに接続」を開く",
     "update.online_off": "オンラインアクセスがオフのため、VOOL は更新を確認しません。",
+    "update.checks_off": "更新の確認はオフ",
     "vcs.online_off": "オンラインアクセスがオフのため、VOOL はインターネット上のカレンダーを読みません。このコンピューター上のカレンダーは引き続き使えます。",
     "chat.no_model.line_text": "VOOLが答えるにはAIモデルが必要です。設定は2分ほどで終わります。",
     "chat.no_model.reply_body": "設定は2分ほどで終わります。セットアップを開いて、VOOLがどこで考えるかを選んでください。Ollamaなどのモデルアプリがすでにこのコンピューターにある場合は、それを開いてからもう一度お尋ねください。",
@@ -2912,7 +2914,7 @@
     "settings.row.live_browser.help": "実行前に各操作を確認してください。ページのスクリプトは無効です。支払いにはウォレットを使ってください。",
     "settings.row.live_browser.label": "ブラウザー"
   },
-  "source_catalog_sha256": "3cd1e12e773d8973743f0c662f74ecd14ad16cdcf25eacadaf60c3100639cf8d",
+  "source_catalog_sha256": "3dc0c0c6f48b71bc267e104a8c250ead42748619d22b729bb07b2e00f43980fa",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

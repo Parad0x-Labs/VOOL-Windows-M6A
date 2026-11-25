@@ -228,7 +228,8 @@ def _door(body: dict) -> int:
     from core.web.api.registry_authorities import set_prefs_authority
     from core.web.api.runtime import RuntimeServices
 
-    return set_prefs_authority(body, {"Content-Type": "application/json"}, RuntimeServices(display_name="VOOL")).status
+    return set_prefs_authority(body, {"Content-Type": "application/json"}, RuntimeServices(display_name="VOOL"),
+                               client_host="127.0.0.1").status
 
 
 def _stored(path: Path) -> object:

@@ -30,8 +30,20 @@ _MAX_BODY = 64 * 1024 * 1024
 _MAX_FRAME = 128 * 1024
 
 
-class TransferCancelled(exceptions.RequestException):
-    """The caller's cancel check fired mid-transfer; the worker (and so the connection) is gone."""
+class ProviderCallCancelled(RuntimeError):
+    """The caller's ``cancel_check`` came true: the transfer worker is ended, no reply is read.
+
+    Carries the adapters' stable ``model_call_cancelled`` code, so a stopped call is never taken
+    for a transport failure of the provider. Killing the worker closes its socket, which is how a
+    provider such as Ollama learns to stop generating (Windows 908869ad, clean-VM job 52).
+    """
+
+    def __init__(self, message: str = "model_call_cancelled") -> None:
+        super().__init__(message)
+
+
+#: The Windows port's earlier name for the same exception (Mac 0.7.5 merge: one class, both names).
+TransferCancelled = ProviderCallCancelled
 
 
 def is_loopback_url(url):
@@ -171,13 +183,10 @@ def urlopen(request, *, timeout):
 
 
 class _Transfer:
-    # Set by _request after construction, never serialized: the check stays in this process and
-    # is polled while waiting. Killing the worker on cancel closes its socket, which is how a
-    # provider such as Ollama learns to stop generating -- the only signal a blocking
-    # non-streaming call can give it.
-    cancel_check = None
-
-    def __init__(self, method, url, options):
+    def __init__(self, method, url, options, cancel_check=None):
+        # Opt-in and parent-side only: never serialized to the worker, polled while waiting. None
+        # leaves the transfer exactly as it was.
+        self.cancel_check = cancel_check
         timeout = options.get("timeout", 30.0)
         budget = timeout[-1] if isinstance(timeout, (tuple, list)) else timeout
         self.deadline = time.monotonic() + max(0.001, float(budget))
@@ -253,7 +262,7 @@ class _Transfer:
                 raise exceptions.Timeout("provider transfer exceeded its wall-clock deadline")
             if self.cancel_check is not None and self._cancelled():
                 self.close()
-                raise TransferCancelled("provider transfer cancelled by its caller")
+                raise ProviderCallCancelled()
             try:
                 frame = self.frames.get(timeout=min(remaining, 0.05))
             except queue.Empty:
@@ -275,10 +284,13 @@ class _Transfer:
             return frame
 
     def _cancelled(self):
+        # Mac 0.7.5: a cancel check that itself breaks ends the call (the worker is stopped and the error is
+        # raised), so a broken check can never leave a call unstoppable.
         try:
             return bool(self.cancel_check())
         except Exception:
-            return False
+            self.close()
+            raise
 
     def close(self):
         self.stopped.set()
@@ -343,14 +355,16 @@ class _Response(_requests.Response):
 
 def _request(method, url, **options):
     streaming = bool(options.pop("stream", False))
+    # ``cancel_check``: a callable the transfer polls while it waits; when it returns true the
+    # worker is ended and ProviderCallCancelled is raised.
     cancel_check = options.pop("cancel_check", None)
     endpoint = _loopback_endpoint(url)
     probe = str(method).upper() == "GET" and not any(options.get(k) for k in ("data", "json", "files"))
     if probe and _recently_refused(endpoint):
         raise exceptions.ConnectionError("provider HTTP worker failed: " + _refusal_message(endpoint))
-    owner = _Transfer(method, url, options)
+    # Only pass cancel_check when there is one, so callers (and test doubles) of the three-argument form still fit.
+    owner = _Transfer(method, url, options) if cancel_check is None else _Transfer(method, url, options, cancel_check)
     owner.endpoint = endpoint
-    owner.cancel_check = cancel_check
     try:
         header = owner.receive()
         if header.get("type") != "response":

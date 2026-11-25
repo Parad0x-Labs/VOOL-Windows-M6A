@@ -442,6 +442,27 @@ def _inside(path: str, roots: list[str], *, lexical: bool | None = None) -> bool
     return False
 
 
+def known_roots() -> list[str]:
+    """The marked folders as known without asking the broker: its start report when it is wired,
+    otherwise `flagged_roots()` (the variable and the owner's list, which ask nothing). Only for checks
+    that refuse more; every write is still decided by `refusal` against `flagged_roots()`."""
+    if _IS_WINDOWS:
+        from core.windows_broker.session import reported_folders, wired
+
+        if wired():
+            return [os.path.normcase(path) for path in reported_folders()]
+    return flagged_roots()
+
+
+def inside_known(path: str) -> bool:
+    """`inside_flagged` against `known_roots()`: never asks the broker. False on any doubt."""
+    try:
+        roots = known_roots()
+    except Exception:
+        return False
+    return bool(roots) and _inside(str(path or ""), roots)
+
+
 def inside_flagged(path: str, environ: dict[str, str] | None = None) -> bool:
     """Whether ``path``, resolved as the gate resolves it, lies inside a flagged folder. False when
     none is flagged. A lane asks this to pick a destination; the gate still decides every write."""
@@ -798,4 +819,4 @@ def refusal(
 
 
 __all__ = ["DOUBLED_DRIVE", "ENV_VAR", "RELATIVE_OFF_LOCAL", "REMOTE_DRIVE", "STATUS", "active", "broker_report", "flagged_roots",
-           "inside_flagged", "may_refuse", "refusal", "refused_spelling", "spelling_refusal_text", "wide_root_reason"]
+           "inside_flagged", "inside_known", "known_roots", "may_refuse", "refusal", "refused_spelling", "spelling_refusal_text", "wide_root_reason"]

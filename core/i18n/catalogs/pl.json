@@ -928,6 +928,7 @@
     "run.review_action": "Przejrzyj dokładne działanie poniżej.",
     "run.status_completed": "Ukończono",
     "run.status_stopped": "Zatrzymano",
+    "run.status_stopping": "Zatrzymywanie…",
     "run.status_waiting": "Czeka na Twoją zgodę",
     "run.stop": "Zatrzymaj",
     "run.stop_title": "Zatrzymaj tę turę — anuluje uruchomione zadanie na twoim komputerze i przerywa odpowiedź.",
@@ -2865,6 +2866,7 @@
     "chat_export.withheld_count": "{n, plural, one {{n} odpowiedź nie została dołączona z powodu zasad prywatności.} few {{n} odpowiedzi nie zostały dołączone z powodu zasad prywatności.} many {{n} odpowiedzi nie zostało dołączonych z powodu zasad prywatności.} other {{n} odpowiedzi nie zostało dołączonych z powodu zasad prywatności.}}",
     "online_access.open_setting": "Otwórz „Samodzielne łączenie z internetem”",
     "update.online_off": "Dostęp do internetu jest wyłączony, więc VOOL nie sprawdza aktualizacji.",
+    "update.checks_off": "Sprawdzanie aktualizacji wyłączone",
     "vcs.online_off": "Dostęp do internetu jest wyłączony, więc VOOL nie odczytuje kalendarzy z internetu. Kalendarze na tym komputerze nadal działają.",
     "chat.no_model.line_text": "Zanim VOOL będzie mógł odpowiadać, potrzebuje modelu AI. Konfiguracja zajmuje około dwóch minut.",
     "chat.no_model.reply_body": "Konfiguracja zajmuje około dwóch minut: otwórz konfigurację i wybierz, gdzie VOOL ma myśleć. Jeśli masz już na tym komputerze aplikację z modelami, na przykład Ollama, otwórz ją i zapytaj ponownie.",
@@ -2912,7 +2914,7 @@
     "settings.row.live_browser.help": "Sprawdź każdą czynność przed wykonaniem. Skrypty stron są wyłączone. Do płatności używaj portfela.",
     "settings.row.live_browser.label": "Przeglądarka"
   },
-  "source_catalog_sha256": "3cd1e12e773d8973743f0c662f74ecd14ad16cdcf25eacadaf60c3100639cf8d",
+  "source_catalog_sha256": "3dc0c0c6f48b71bc267e104a8c250ead42748619d22b729bb07b2e00f43980fa",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

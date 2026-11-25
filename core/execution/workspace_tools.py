@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from core import safe_git, windows_path_policy, windows_write_gate
+from core import git_metadata_protection, safe_git, windows_path_policy, windows_write_gate
 
 from .artifacts import (
     DestinationChangedError,
@@ -42,6 +42,18 @@ _PATCH_HEADER_LINE_RE = re.compile(r"^(?:\+\+\+|---)[ \t]+(?P<path>.+)$")
 _ENGINE_UNSAFE_NAME_RE = re.compile(r'[\s"\\]')
 _INDENTED_HEADER_RE = re.compile(r"^[ \tX]+(?:---[ \t]|\+\+\+[ \t]|@@[ \t]|diff --git )|^[ \tX]*Index:", re.MULTILINE)
 _LINK_MODE_RE = re.compile(r"^(?:new file mode|new mode|old mode|deleted file mode) 120000\b|^index \S+ 120000\b")
+_PATCH_TARGET_RE = re.compile(r"^(?:\+\+\+|---)\s+(?P<path>.+)$", re.MULTILINE)
+# Other lines GNU patch takes a file name from: a context diff's `*** name` and `Index:`/`Prereq:`-style headers.
+_OTHER_NAME_HEADER_RE = re.compile(r"^(?:\*\*\*|Index:)\s+(?P<path>.+)$")
+_CONTEXT_RANGE_RE = re.compile(r"^\*\*\*\s+\d+(?:,\d+)?\s+\*\*\*\*\s*$")
+# A line that makes GNU patch read a patch as something other than a plain `---`/`+++` unified diff, or pick a
+# file name from somewhere other than those headers. Such a patch is never handed to it.
+_GNU_PATCH_UNSAFE_LINE_RE = re.compile(
+    r"^(?:\*\*\* |Index:|Prereq:|diff --git |rename |copy |old mode |new mode |new file mode |deleted file mode |"
+    r"similarity index |dissimilarity index |GIT binary patch|Binary files |\d+(?:,\d+)?[acd]\d)"
+)
+_GIT_PATH_HEADER_RE = re.compile(r"^(?:rename|copy) (?:from|to) (?P<path>.+)$")
+_GIT_DIFF_LINE_RE = re.compile(r'^diff --git (?P<old>"(?:[^"\\]|\\.)*"|\S+) (?P<new>"(?:[^"\\]|\\.)*"|\S+)$')
 _HUNK_HEADER_RE = re.compile(
     r"^@@\s+\-(?P<old_start>\d+)(?:,(?P<old_count>\d+))?\s+\+(?P<new_start>\d+)(?:,(?P<new_count>\d+))?\s+@@"
 )
@@ -364,6 +376,24 @@ def apply_unified_diff_workspace(
             "response_text": "No patch targets were found in the supplied unified diff.",
             "details": {"paths": []},
         }
+    for relative in touched_paths:
+        # Every path the patch names is checked before any engine runs, so a refused one leaves the whole
+        # patch unapplied rather than half of it.
+        try:
+            resolve_workspace_path(relative, workspace_root=workspace_root, write=True)
+        except ValueError as exc:
+            if (windows_write_gate.active() and reviewed_destinations is None
+                    and git_metadata_protection.REFUSAL_PREFIX not in str(exc)):
+                # Windows port: any other refused path (outside the workspace, VOOL's own state) is refused
+                # below, still before any engine runs, as invalid_arguments with "Nothing was written". Off
+                # Windows, and for a reviewed code-task patch, Mac 0.7.5's early refusal stands.
+                continue
+            return {
+                "ok": False,
+                "status": "workspace_path_refused",
+                "response_text": f"I did not apply this patch: it changes `{relative}`, which I cannot change. {exc}",
+                "details": {"paths": touched_paths, "changed_paths": [], "refused_path": relative},
+            }
     if reviewed_destinations is not None:
         # An approved code-task patch: only its reviewed destinations, written pinned. The files it
         # changes are the ones the review listed (`patch_review_paths`, the engine's own parse).
@@ -524,6 +554,11 @@ def apply_unified_diff_workspace(
             errors.append(f"GNU patch was not started because {names} already exists and it would write over it.")
             patch_strip = None
         patch_available = shutil.which("patch") if patch_strip is not None else None
+        if patch_available and any(_GNU_PATCH_UNSAFE_LINE_RE.match(line) for line in patch_text.splitlines()):
+            # Mac 0.7.4: GNU patch only ever gets a plain unified diff; a context diff, `Index:` or git copy/rename
+            # line makes it pick file names by rules of its own.
+            errors.append("this patch is not a plain unified diff, so it is not handed to GNU patch")
+            patch_available = None
         if patch_available:
             # `--fuzz=0` is load-bearing, not a style choice: GNU patch's default fuzz factor (2)
             # will drop mismatched context lines and search nearby for an approximate match, which
@@ -1280,13 +1315,49 @@ def _gnu_patch_reads_only_vools_headers(patch_text: str) -> bool:
 
 def _extract_patch_paths(patch_text: str) -> list[str]:
     """Each workspace path the patch can change, as VOOL reads it: every header name with its `a/`/`b/`
-    prefix dropped, and every rename/copy name, in order, once."""
+    prefix dropped, and every rename/copy name, in order, once. Merged with Mac 0.7.4: also every name GNU patch
+    or git apply could take from a line VOOL's own reading skips (a context diff's `*** name`, `Index:`, a quoted
+    `diff --git` name), so the all-or-nothing check sees each of them."""
     names, moved, _readable, _headers = _patch_header_names(patch_text)
     candidates: list[str] = []
-    for clean in [_normalize_patch_path(name) for name in names if name != "/dev/null"] + moved:
-        if clean and clean not in candidates:
+
+    def add(raw: str) -> None:
+        # A header name ends at a tab (`diff -u` writes a timestamp after one), as _header_name reads it.
+        clean = _normalize_patch_path(_unquote_patch_path(_header_name(raw)))
+        if clean and clean != "/dev/null" and clean not in candidates:
             candidates.append(clean)
+
+    for raw in [*names, *moved]:
+        add(raw)
+    for line in str(patch_text or "").splitlines():
+        match = _PATCH_TARGET_RE.match(line)
+        if match:
+            add(str(match.group("path") or ""))
+            continue
+        other = _OTHER_NAME_HEADER_RE.match(line)
+        if other and not _CONTEXT_RANGE_RE.match(line):
+            add(other.group("path"))
+            continue
+        header = _GIT_PATH_HEADER_RE.match(line)
+        if header:
+            add(header.group("path"))
+            continue
+        git_line = _GIT_DIFF_LINE_RE.match(line)
+        if git_line:
+            add(git_line.group("old"))
+            add(git_line.group("new"))
     return candidates
+
+
+def _unquote_patch_path(raw: str) -> str:
+    # git C-quotes a path with unusual characters: "a/dir/na\tme". Unquote so the check sees the real name.
+    text = str(raw or "").strip()
+    if len(text) >= 2 and text.startswith('"') and text.endswith('"'):
+        try:
+            return text[1:-1].encode("latin-1", "backslashreplace").decode("unicode_escape").encode("latin-1").decode("utf-8")
+        except (UnicodeError, ValueError):
+            return text[1:-1]
+    return text
 
 
 def _classify_patch_apply_failure(errors: list[str]) -> str:

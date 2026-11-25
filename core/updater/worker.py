@@ -127,7 +127,12 @@ def start_worker(subsystem, offer, txid: str, *, recovery: bool = False, rollbac
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     executable = Path(sys.executable).resolve()
     app = Path(subsystem.feed.app_path).resolve()
-    if executable.is_relative_to(app) and not windows:
+    if executable.is_relative_to(app) and subsystem.platform == "linux-x64-bundle":
+        # A package update installs the new version BESIDE this one and never edits it, and pruning keeps the
+        # version just replaced, so this interpreter stays intact for the whole detached run.
+        if not executable.is_relative_to(app / "versions"):
+            raise ValueError("package updater interpreter is outside the installed versions")
+    elif executable.is_relative_to(app) and not windows:
         # The worker must not run from the folder it replaces: Windows refuses to rename a
         # directory while a process holds its interpreter open.
         runtime = app / "Contents/Resources/python"
