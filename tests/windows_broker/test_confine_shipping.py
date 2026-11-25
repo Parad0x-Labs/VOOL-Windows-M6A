@@ -56,6 +56,8 @@ def _install(tmp_path: Path, *, checkout: bool = False) -> tuple[Path, Path, Pat
         folder = tmp_path / "VOOL" / "broker" / "confine"
         pin_path = tmp_path / "VOOL" / "config" / "confine-pin.json"
     app.mkdir(parents=True, exist_ok=True)
+    if not checkout:
+        pin.install_marker(app).write_text("VOOL installed app folder", encoding="ascii")   # what the bundle build stages
     for rel, data in FILES.items():
         target = folder / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -286,6 +288,7 @@ def test_on_windows_a_held_launcher_still_starts(tmp_path: Path) -> None:
     # A real executable in the pinned folder: the system's cmd.exe, so the test needs no build.
     app = tmp_path / "VOOL" / "app"
     app.mkdir(parents=True)
+    pin.install_marker(app).write_text("VOOL installed app folder", encoding="ascii")   # what the bundle build stages
     folder = tmp_path / "VOOL" / "broker" / "confine"
     folder.mkdir(parents=True)
     exe = folder / "VoolConfine.exe"
@@ -355,6 +358,8 @@ def test_the_installer_ships_the_pin_and_clears_the_launcher_folder_on_upgrade()
 
 def test_the_locations_match_what_the_installer_and_publish_write(tmp_path: Path) -> None:
     app = tmp_path / "VOOL" / "app"
+    app.mkdir(parents=True)
+    pin.install_marker(app).write_text("VOOL installed app folder", encoding="ascii")   # what the bundle build stages
     (installed_folder, installed_pin), (checkout_folder, checkout_pin) = pin.launcher_locations(app)
     assert installed_folder == tmp_path / "VOOL" / "broker" / "confine"
     assert installed_pin == tmp_path / "VOOL" / "config" / "confine-pin.json"

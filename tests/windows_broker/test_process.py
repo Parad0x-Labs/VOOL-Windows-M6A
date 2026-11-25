@@ -153,6 +153,7 @@ def _ready(pipe: str = r"\\.\pipe\vool-broker-test") -> bytes:
 
 def test_the_installed_layout_finds_the_broker_beside_the_app(tmp_path: Path) -> None:
     (tmp_path / "app").mkdir()
+    (tmp_path / "app" / ".vool-install").write_text("VOOL installed app folder", encoding="ascii")
     (tmp_path / "broker").mkdir()
     exe = tmp_path / "broker" / "VoolBroker.exe"
     exe.write_bytes(b"")

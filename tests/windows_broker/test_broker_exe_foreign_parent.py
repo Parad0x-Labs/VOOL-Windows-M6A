@@ -24,6 +24,12 @@ def _base(tmp_path: Path, name: str) -> Path:
     return tmp_path
 
 
+def _mark_installed(app: Path) -> None:
+    from sandbox.windows_confinement_pin import install_marker
+
+    install_marker(app).write_text("VOOL installed app folder", encoding="ascii")   # what the bundle build stages
+
+
 def _plant_parent_broker(parent: Path) -> Path:
     exe = parent / "broker" / "VoolBroker.exe"
     exe.parent.mkdir(parents=True, exist_ok=True)
@@ -71,7 +77,19 @@ def test_an_app_root_still_finds_the_installed_broker(tmp_path: Path, name: str)
     exe = _plant_parent_broker(install)
     app = install / name
     app.mkdir()
+    _mark_installed(app)
     assert broker_executable(app) == exe
+
+
+@pytest.mark.parametrize("name", ACCEPTED)
+def test_a_checkout_cloned_as_app_never_gets_the_parent_broker(tmp_path: Path, name: str) -> None:
+    """E2-seams-08#1: without the install marker inside it, an `app` folder is a checkout."""
+    _plant_parent_broker(tmp_path)
+    app = tmp_path / name
+    app.mkdir()
+    assert broker_executable(app) is None
+    published = _publish(app)
+    assert broker_executable(app) == published
 
 
 @pytest.mark.parametrize("name", ACCEPTED)
@@ -80,4 +98,5 @@ def test_an_app_root_prefers_the_installed_broker_over_a_publish(tmp_path: Path,
     exe = _plant_parent_broker(install)
     app = install / name
     _publish(app)
+    _mark_installed(app)
     assert broker_executable(app) == exe

@@ -35,6 +35,10 @@ def _populate(folder: Path, pin_path: Path, files: dict[str, bytes]) -> None:
     pin_path.write_text(json.dumps(body), encoding="utf-8")
 
 
+def _mark_installed(app: Path) -> None:
+    pin.install_marker(app).write_text("VOOL installed app folder", encoding="ascii")   # what the bundle build stages
+
+
 def _checkout_pair(root: Path) -> tuple[Path, Path]:
     publish = root / "windows" / "broker" / "publish"
     return (publish / "confine", publish / "confine-pin.json")
@@ -105,6 +109,8 @@ def test_a_relative_app_root_ignores_a_launcher_in_the_current_folder(tmp_path: 
 @pytest.mark.parametrize("name", ACCEPTED)
 def test_an_app_root_probes_the_installed_layout_first(tmp_path: Path, name: str) -> None:
     app = tmp_path / "VOOL" / name
+    app.mkdir(parents=True)
+    _mark_installed(app)
     assert pin.launcher_locations(app) == (
         (tmp_path / "VOOL" / "broker" / "confine", tmp_path / "VOOL" / "config" / "confine-pin.json"),
         _checkout_pair(app),
@@ -116,8 +122,50 @@ def test_an_installed_launcher_beside_an_app_root_verifies(tmp_path: Path, name:
     install = tmp_path / "VOOL"
     app = install / name
     app.mkdir(parents=True)
+    _mark_installed(app)
     _populate(install / "broker" / "confine", install / "config" / "confine-pin.json", FILES)
     assert pin.verified_launcher(app) == install / "broker" / "confine" / "VoolConfine.exe"
+
+
+# --- E2-seams-08#1: an `app` folder is the install only when the marker inside it says so --------
+
+@pytest.mark.parametrize("name", ACCEPTED)
+def test_a_checkout_cloned_as_app_never_uses_the_parent_launcher(tmp_path: Path, name: str) -> None:
+    root = _foreign_parent(tmp_path, name)
+    assert pin.launcher_locations(root) == (_checkout_pair(root),)
+    assert pin.verified_launcher(root) is None
+    folder, pin_path = _checkout_pair(root)
+    _populate(folder, pin_path, FILES)
+    assert pin.verified_launcher(root) == folder / "VoolConfine.exe"
+
+
+def test_a_marker_above_or_beside_the_app_folder_proves_nothing(tmp_path: Path) -> None:
+    root = _foreign_parent(tmp_path, "app")
+    (tmp_path / pin.INSTALL_MARKER_NAME).write_text("x", encoding="ascii")
+    (tmp_path / "config" / pin.INSTALL_MARKER_NAME).write_text("x", encoding="ascii")
+    assert pin.launcher_locations(root) == (_checkout_pair(root),)
+
+
+def test_a_marker_that_is_a_folder_or_a_link_proves_nothing(tmp_path: Path) -> None:
+    root = _foreign_parent(tmp_path, "app")
+    pin.install_marker(root).mkdir()
+    assert not pin.is_installed_app_root(root)
+    pin.install_marker(root).rmdir()
+    elsewhere = tmp_path / "planted-marker"
+    elsewhere.write_text("x", encoding="ascii")
+    try:
+        pin.install_marker(root).symlink_to(elsewhere)
+    except OSError:
+        pytest.skip("this runner cannot make a symbolic link")   # the folder row above still runs
+    assert not pin.is_installed_app_root(root)
+    assert pin.launcher_locations(root) == (_checkout_pair(root),)
+
+
+def test_a_relative_app_root_with_a_marker_still_never_probes_its_parent(tmp_path: Path, monkeypatch) -> None:
+    _foreign_parent(tmp_path, "app")
+    _mark_installed(tmp_path / "app")
+    monkeypatch.chdir(tmp_path)
+    assert pin.launcher_locations(Path("app")) == (_checkout_pair(Path("app")),)
 
 
 # --- the follow-up install marker lives inside {app}\app, never beside or above it ---------------
