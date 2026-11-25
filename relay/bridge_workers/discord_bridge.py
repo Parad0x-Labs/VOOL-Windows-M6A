@@ -69,7 +69,18 @@ class DiscordBridge:
 
     def _load_owner(self) -> Any:
         path = _owner_file()
-        if not path.exists():
+        if _IS_WINDOWS:
+            # Only a file that is really not there is "no owner yet" (first use pairs). Path.exists()
+            # answers False for a symlink loop or a folder in the way and raises on access denied;
+            # each of those is an owner file VOOL cannot read, which refuses everyone instead.
+            try:
+                os.stat(path)
+            except FileNotFoundError:
+                return None
+            except OSError:
+                print(f"[DiscordBridge] Owner file {path} is unreadable; refusing every Discord user.")
+                return _OWNER_UNREADABLE
+        elif not path.exists():
             return None
         try:
             if _IS_WINDOWS:
