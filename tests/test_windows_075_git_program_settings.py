@@ -185,3 +185,21 @@ def test_off_windows_without_git_the_mac_rule_is_unchanged(tmp_path, monkeypatch
     monkeypatch.setattr(git_metadata_protection.shutil, "which", lambda _name: None)
     repo = _repo(tmp_path / "repo", "\tfsmonitor = tools/watch.sh\n")
     assert refusal(repo / "tools" / "watch.sh") == ""
+
+
+def test_on_windows_a_patch_that_drops_the_last_newline_is_refused_and_writes_nothing(tmp_path, monkeypatch) -> None:
+    """Mac's git metadata file sends every patch with a no-newline-at-end marker; on Windows its helper keeps the
+    newline instead (VOOL's Windows engine applies a patch only when it can reproduce it byte for byte). This row
+    pins what Windows does with the marker: the patch is refused before anything is written."""
+    from core.execution.workspace_tools import apply_unified_diff_workspace
+
+    monkeypatch.setattr(windows_write_gate, "_IS_WINDOWS", True)
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.setenv(windows_write_gate.ENV_VAR, str(work))
+    (work / "f.txt").write_bytes(b"one\n")
+    patch = "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1 @@\n-one\n+two\n\\ No newline at end of file\n"
+    result = apply_unified_diff_workspace({"patch": patch}, workspace_root=work, session_id="t")
+    assert result["ok"] is False
+    assert "byte for byte" in result["response_text"] and "Nothing was written" in result["response_text"]
+    assert (work / "f.txt").read_bytes() == b"one\n"
