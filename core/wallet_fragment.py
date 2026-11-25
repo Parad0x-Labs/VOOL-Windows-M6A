@@ -111,7 +111,7 @@ _WALLET_CSS = """
 .vw-copy{font:inherit;font-size:11px;padding:1px 6px;border:1px solid var(--border,#262b35);border-radius:6px;background:transparent;color:var(--muted,#9aa1af);cursor:pointer;margin-left:6px;vertical-align:1px}
 .vw-sheet-note{font-size:12px;margin:6px 0;color:#fbbf24}
 .vw-sheet-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px}
-.vw-review{margin:4px 0 8px}
+div.vw-review{margin:4px 0 8px}
 .vw-review-line{font-size:13px;margin:4px 0;line-height:1.35}
 .vw-review-line.primary{font-size:14.5px;font-weight:600}
 .vw-review-line.muted{color:var(--muted,#9aa1af);font-size:12.5px}
@@ -1651,11 +1651,12 @@ function pilotCardFor(p){
     // Reject on the card itself (the status says when): the same /api/wallet/reject door the review sheet's
     // "Cancel request" uses, with the same outcome text. It can only turn the request down; nothing here approves.
     var reject = el('button', 'vw-btn vw-card-reject', WT('wallet.reject', 'Reject')); reject.type = 'button';
-    reject.setAttribute('aria-label', 'reject this transfer request; nothing is signed or sent');
+    reject.setAttribute('aria-label', WT('wallet.reject_aria', 'reject the payment proposal'));
     reject.addEventListener('click', function(){
       if (sheetOpen && sheetOpen.proposalId === p.proposal_id) { sheetOpen.focus(); return; }  // the open review owns the decision
       reject.disabled = true; review.disabled = true;
-      cancelProposal(p, controls, result, function(){ reject.disabled = false; review.disabled = false; result.textContent = 'The cancel request did not complete.'; });
+      function giveBack(){ reject.disabled = false; review.disabled = false; }
+      cancelProposal(p, controls, result, function(){ if (!controls.parentNode) return; giveBack(); result.textContent = 'The cancel request did not complete.'; }, null, giveBack);
     });
     controls.appendChild(reject);
   }
@@ -1668,8 +1669,9 @@ function pilotCardFor(p){
 }
 // One way to turn a transfer request down, from the review sheet's "Cancel request" or the card's own Reject: the
 // reject door, then the card says what was true when it was cancelled. `before` runs once the door answers (the sheet
-// closes itself there); `failed` runs when the request did not complete.
-function cancelProposal(p, cardControls, cardResult, failed, before){
+// closes itself there); `failed` runs when the request did not complete; `refused` runs when the door answered but
+// did not end the request, so a caller can give its controls back.
+function cancelProposal(p, cardControls, cardResult, failed, before, refused){
   return postJson('/api/wallet/reject', { proposal_id: p.proposal_id }).then(function(res){
     if (before) before();
     if (res.ok) refreshStatus();  // one authoritative read now, so the open Wallet panel shows the outcome without waiting for the poll
@@ -1684,7 +1686,10 @@ function cancelProposal(p, cardControls, cardResult, failed, before){
     } else if (res.ok && data.transfer) {
       cardControls.remove(); renderTransfer(cardResult, data.transfer); transferCards[p.proposal_id] = cardResult;
       cardResult.setAttribute('data-transfer-state', data.transfer.state || ''); markAsked(cardResult, statusAsked);
-    } else cardResult.textContent = (data.message || data.error) || 'The request could not be cancelled.';
+    } else {
+      cardResult.textContent = (data.message || data.error) || 'The request could not be cancelled.';
+      if (refused) refused();
+    }
   }).catch(function(){ failed(); });
 }
 function openSheet(p, cardControls, cardResult, opener){
