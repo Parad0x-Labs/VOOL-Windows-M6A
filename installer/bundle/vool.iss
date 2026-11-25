@@ -74,6 +74,17 @@ Source: "{#SourcePath}\..\assets\vool.ico"; DestDir: "{app}"; Flags: ignoreversi
 ; a file an older build shipped and this one dropped would otherwise stay behind as an unlisted
 ; file, and VOOL would refuse the launcher. Program files only; nothing of the user's lives there.
 Type: filesandordirs; Name: "{app}\broker\confine"
+; The bundle's runtime folders are replaced whole on every install, as the signed updater replaces them
+; (core/updater/windows.py _MANAGED_DIRECTORIES). Copied over an older install, a package the new build
+; ships at a new version left the old <name>-<version>.dist-info and any file the new version dropped, and a
+; module a release removed stayed importable. PrepareToInstall has already stopped VOOL's own python;
+; ollama goes down with it, since the supervisor runs ollama only inside a kill-on-close job. Program files only: the user's data, models, backups and update staging live elsewhere.
+; IsVoolInstall guards all three: the folder page and /DIR= let a person point {app} at a folder of their
+; own (D:\Tools, their user folder), where a "python", "app" or "ollama" folder is theirs. A first install,
+; or one into a folder that holds no VOOL install, deletes nothing.
+Type: filesandordirs; Name: "{app}\python"; Check: IsVoolInstall
+Type: filesandordirs; Name: "{app}\app"; Check: IsVoolInstall
+Type: filesandordirs; Name: "{app}\ollama"; Check: IsVoolInstall
 
 [Registry]
 ; User-facing VOOL deep link. HKCU matches PrivilegesRequired=lowest and never requires admin.
@@ -121,6 +132,38 @@ Type: filesandordirs; Name: "{app}\update_backups"
 Type: files; Name: "{app}\.vool_updating.lock"
 
 [Code]
+var
+  VoolInstallFound: Boolean;
+
+{ True only when {app} already holds a VOOL install made by this installer: the bundle manifest with its
+  schema, the supervisor, the bundled interpreter and the app source, the markers the runtime and the
+  signed updater use (core/runtime_paths.py _is_installed_windows_bundle, core/updater/windows.py). Any
+  marker missing means the folder is not ours, so [InstallDelete] removes nothing from it. }
+function DetectVoolInstall(): Boolean;
+var
+  Root, Manifest: String;
+  Text: AnsiString;
+begin
+  Result := False;
+  Root := ExpandConstant('{app}');
+  Manifest := Root + '\bundle_manifest.json';
+  if not FileExists(Manifest) then Exit;
+  if not FileExists(Root + '\bundle_supervisor.py') then Exit;
+  if not FileExists(Root + '\python\python.exe') then Exit;
+  if not DirExists(Root + '\app\core') then Exit;
+  if not LoadStringFromFile(Manifest, Text) then Exit;
+  Result := Pos('vool.bundle_manifest.v1', String(Text)) > 0;
+end;
+
+{ The Check for each [InstallDelete] runtime folder. Setup calls it once per entry, as it reaches that
+  entry, and the python entry runs first: re-reading the markers then would find python\python.exe gone
+  and leave app and ollama uncleared. So it returns the answer PrepareToInstall recorded before anything
+  was deleted. }
+function IsVoolInstall(): Boolean;
+begin
+  Result := VoolInstallFound;
+end;
+
 procedure StopNulla();
 var
   ResultCode: Integer;
@@ -161,6 +204,7 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   StopVoolProcesses();
+  VoolInstallFound := DetectVoolInstall();
   Result := '';
 end;
 

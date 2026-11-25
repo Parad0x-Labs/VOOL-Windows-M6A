@@ -83,16 +83,29 @@ if ($LASTEXITCODE -ne 0) { throw "Embedded Python pip bootstrap failed." }
 # zstandard is imported by the served command surface at startup, so without it the API refuses
 # to serve; reportlab + markdown-it-py render PDFs; the eth/x402/web3 packages are the wallet's
 # EVM signing and the x402 SDK; tzdata is the zone database zoneinfo reads on Windows.
-& $py -m pip install --no-warn-script-location -q `
-    "setuptools>=83.0.0" wheel
+# Every package below is pinned by version and sha256 to the one uv.lock pins, the set CI tests
+# (requirements-windows-build.txt, requirements-windows-runtime.txt). The wheelhouse is downloaded with
+# --require-hashes, and the install reads only the wheelhouse (--no-index), so it can take no other
+# version: two builds of one commit ship the same packages. Unpinned, each build took that day's newest
+# release, and an installer run over an older install left the old <name>-<version>.dist-info behind.
+# setuptools and wheel come first: proxy-tools (pywebview's) is an sdist, built with no build isolation.
+$BuildRequirements = Join-Path $PSScriptRoot "requirements-windows-build.txt"
+& $py -m pip install --no-warn-script-location -q --require-hashes --only-binary=:all: --no-deps `
+    -r $BuildRequirements
 if ($LASTEXITCODE -ne 0) { throw "Embedded Python setuptools/wheel bootstrap failed." }
-& $py -m pip install --no-build-isolation --no-warn-script-location -q `
+$RuntimeRequirements = Join-Path $PSScriptRoot "requirements-windows-runtime.txt"
+$Wheelhouse = Join-Path $Stage "wheelhouse"
+if (Test-Path $Wheelhouse) { Remove-Item $Wheelhouse -Recurse -Force }
+& $py -m pip download -q --require-hashes --no-deps --no-build-isolation -d $Wheelhouse -r $RuntimeRequirements
+if ($LASTEXITCODE -ne 0) { throw "Embedded Python runtime wheelhouse download failed (a pin or a sha256 does not match)." }
+& $py -m pip install --no-build-isolation --no-warn-script-location -q --no-index --find-links=$Wheelhouse `
     pydantic "cryptography>=50.0.0" "anyio>=4.14.2" requests pynacl keyring psutil pyyaml "starlette>=1.3.1,<2.0" "uvicorn>=0.30,<1.0" solders `
     pywebview pythonnet "pypdf==6.21.0" "xlrd==2.0.2" "reportlab==5.0.1" "markdown-it-py==4.2.0" `
     zstandard tzdata `
     "eth-abi>=6.0" "eth-utils>=6.0" "eth-account>=0.13" `
     "x402[evm]==2.25.0" "web3==8.0.0"
 if ($LASTEXITCODE -ne 0) { throw "Embedded Python runtime dependency installation failed." }
+Remove-Item -LiteralPath $Wheelhouse -Recurse -Force -ErrorAction SilentlyContinue
 # pytest, so `workspace.run_tests` can run pytest in a marked folder: the sandbox runs `pytest` and
 # `python -m pytest` as this interpreter, and without it every run failed with "No module named
 # pytest". Each wheel is pinned by version and sha256 and installed with no dependency resolution
