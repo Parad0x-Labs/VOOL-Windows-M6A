@@ -1,56 +1,58 @@
-"""Generic tools never write a repository's git metadata.
+"""Repository metadata the generic write tools may not change.
 
-A repository's ``.git`` folder holds what git obeys: hooks it runs (``hooks/pre-commit`` on the
-user's next own ``git commit``; Git for Windows runs a hook through its bundled sh whatever the
-file's mode), config naming programs (``core.fsmonitor`` runs on the user's next ``git status``),
-attributes choosing filters, and the config of every submodule under ``modules/``. A file written
-there by a generic tool is a program git later runs for the user, outside any sandbox and with no
-approval (reproduced 20 Oct 2026 through workspace.write_file, workspace.ensure_directory and
-workspace.apply_unified_diff, on POSIX and through the Windows write gate). So a write is refused
-when any part of its path names git metadata:
+A repository's ``.git`` entry (a directory, or a file pointing at one) holds configuration and hooks that git runs
+later for the user, outside any sandbox. The command sandbox already denies writes to it (sandbox.job_runner's
+``_SEATBELT_GIT_METADATA_FILTER``); this module is the same rule for the file tools, asked through
+``core.runtime_state_protection.refusal`` on every write.
 
-* a ``.git`` component, compared the way the filesystems that matter compare it: case-folded
-  (macOS and Windows ignore case), with the trailing dots and spaces Windows drops, before an
-  NTFS stream suffix (``.git::$INDEX_ALLOCATION``), and its 8.3 short name ``git~1`` (git's own
-  ``is_ntfs_dotgit``). A ``.git`` FILE is covered too: it points git at a folder of its choosing;
-* a folder git would itself open as a repository (``HEAD`` beside ``objects/`` and ``refs/``): a
-  bare repository, or a git folder reached through a symlink or by its own path.
+A path is refused when any of its components is ``.git`` in any letter case (macOS volumes are case-insensitive by
+default), compared both as written (made absolute) and with symlinks resolved, or when it lies inside a directory
+that git itself would treat as a repository directory, whatever that directory is called.
 
-Paths are compared as written (made absolute) and with symlinks resolved, like
-core.runtime_state_protection, which calls this for every write. Git's own operations
-(repo.git, safe_git) do not go through here: git writes its metadata itself.
+A repository's configuration can also send git to ordinary project files: `core.hooksPath` names the hooks folder
+(Husky sets it to a folder in the project) and `include.path` / `includeIf.*.path` pull in more configuration.
+For a path inside a working tree, git itself is asked where its hooks folder and every configuration file it reads
+are, and a write there is refused too, as is any file in the working tree named on the command line of a setting
+that makes git run a program (such as `core.fsmonitor` or a filter or diff driver). When git cannot answer and the repository's own configuration names either
+setting, the write is refused rather than guessed.
 
-Not covered, stated: a write can still assemble a new bare-looking repository file by file
-(``HEAD`` last); git opens one only when the user runs git inside it, which ``safe.bareRepository
-= explicit`` (git 2.38+) refuses on the user's side.
+Windows (port): a ``.git`` name is also matched the way NTFS reads it (trailing dots and spaces dropped, an NTFS
+stream suffix such as ``.git::$INDEX_ALLOCATION``, the 8.3 short name ``git~1``: git's ``is_ntfs_dotgit``), a
+folder with ``HEAD`` and a ``commondir`` file counts as a git folder, and a folder that cannot be read is refused.
+VOOL runs no git on Windows (core.safe_git), so git is never asked there: a repository whose own configuration
+names a hooks folder or an include is refused outright (the "git cannot answer" rule below).
 """
 from __future__ import annotations
 
 import contextlib
 import os
 import re
+import shutil
+import subprocess
+import time
 from pathlib import Path
 
-REFUSAL_PREFIX = "git_metadata"
+REFUSAL_PREFIX = "protected_git_metadata"
+
+# Code points HFS+ ignores in file names, so a name carrying them is still `.git` there (git's is_hfs_dotgit list).
+_HFS_IGNORABLE = frozenset(
+    "‌‍‎‏‪‫‬‭‮⁪⁫⁬⁭⁮⁯﻿"
+)
+
+
 _SHORT_NAME = re.compile(r"git~\d+")
 
 
 def is_git_metadata_name(name: str) -> bool:
-    """Whether a single path component names a ``.git`` entry on some filesystem git supports."""
-    folded = name.split(":", 1)[0].rstrip(" .").casefold()
-    return folded == ".git" or bool(_SHORT_NAME.fullmatch(folded))
+    """Whether a single path component names a ``.git`` entry on some filesystem git supports: HFS+ ignorable code
+    points dropped (git's is_hfs_dotgit), case-folded, and as NTFS reads it (is_ntfs_dotgit: trailing dots and
+    spaces dropped, a stream suffix after ``:``, the 8.3 short name ``git~1``)."""
+    plain = "".join(ch for ch in name if ch not in _HFS_IGNORABLE)
+    folded = plain.split(":", 1)[0].rstrip(" .").casefold()
+    return plain.casefold() == ".git" or folded == ".git" or bool(_SHORT_NAME.fullmatch(folded))
 
 
-def _is_git_directory(folder: Path) -> bool:
-    # setup.c is_git_directory: HEAD, plus objects/ and refs/ (or a commondir file standing for them).
-    try:
-        if not (folder / "HEAD").is_file():
-            return False
-        if (folder / "commondir").is_file():
-            return True
-        return (folder / "objects").is_dir() and (folder / "refs").is_dir()
-    except OSError:
-        return True  # cannot rule it out: refuse
+_is_dotgit = is_git_metadata_name
 
 
 def _forms(path: Path) -> list[Path]:
@@ -59,23 +61,180 @@ def _forms(path: Path) -> list[Path]:
         forms.append(Path(os.path.abspath(path)))
     with contextlib.suppress(OSError, RuntimeError, ValueError):
         resolved = path.resolve()
-        if resolved not in forms:
+        if all(str(resolved) != str(form) for form in forms):
             forms.append(resolved)
     return forms
+
+
+def _is_git_directory(directory: Path) -> bool:
+    # git's own test for a repository directory (setup.c is_git_directory): HEAD, plus objects/ and refs/ or a
+    # commondir file standing for them. A folder that cannot be read cannot be ruled out: refuse.
+    try:
+        if not (directory / "HEAD").is_file():
+            return False
+        if (directory / "commondir").is_file():
+            return True
+        return (directory / "objects").is_dir() and (directory / "refs").is_dir()
+    except OSError:
+        return True
+
+
+_GIT_TIMEOUT_SECONDS = 10.0
+# One write asks several times (each check, each path of a patch); git's answer is reused for this long.
+_CACHE_SECONDS = 2.0
+_TARGETS_CACHE: dict[str, tuple[float, tuple[list[Path], list[Path]] | None]] = {}
+
+
+def _worktree_top(form: Path) -> Path | None:
+    for directory in form.parents:
+        with contextlib.suppress(OSError):
+            if os.path.lexists(directory / ".git"):
+                return directory
+    return None
+
+
+def _local_config_names_redirect(top: Path) -> bool:
+    """Whether the repository's own config text mentions a hooks folder or an include (read without git)."""
+    entry = top / ".git"
+    try:
+        if entry.is_file():
+            pointer = entry.read_text(encoding="utf-8", errors="replace").strip()
+            gitdir = Path(pointer.split(":", 1)[1].strip()) if pointer.lower().startswith("gitdir:") else None
+            if gitdir is None:
+                return True
+            config = (gitdir if gitdir.is_absolute() else top / gitdir) / "config"
+        else:
+            config = entry / "config"
+        text = config.read_text(encoding="utf-8", errors="replace").casefold() if config.exists() else ""
+    except OSError:
+        return True
+    return "hookspath" in text or "include" in text
+
+
+def _git(top: Path, *args: str, timeout: float) -> str | None:
+    from core import safe_git
+
+    # Windows: VOOL starts no git (core.safe_git refuses it), so git cannot answer and the caller falls back to the
+    # repository's own configuration text (refused when it names a hooks folder or an include).
+    git = None if safe_git.git_refused_here() else shutil.which("git")
+    if not git:
+        return None
+    # VOOL's own GIT_* variables (GIT_DIR, GIT_CONFIG_*) would make git describe some other repository.
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env.update({"GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"})
+    try:
+        done = subprocess.run([git, "-C", str(top), *args], capture_output=True, text=True,
+                              timeout=timeout, env=env)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout if done.returncode == 0 else None
+
+
+# Settings whose value is a command line git runs.
+_PROGRAM_KEYS = frozenset({
+    "core.fsmonitor", "core.pager", "core.editor", "core.sshcommand", "core.askpass", "sequence.editor",
+    "credential.helper", "gpg.program", "gpg.openpgp.program", "gpg.x509.program", "gpg.ssh.program",
+    "diff.external", "difftool.cmd", "mergetool.cmd", "pager.log", "web.browser", "sendemail.smtpserver",
+    "interactive.difffilter", "core.gitproxy", "core.alternaterefscommand", "sendemail.sendmailcmd",
+})
+_PROGRAM_SUFFIXES = (".clean", ".smudge", ".process", ".command", ".textconv", ".driver", ".cmd", ".helper",
+                     ".program", ".path", ".receivepack", ".uploadpack", ".proxy", ".sshcommand", ".update")
+
+
+def _runs_a_program(key: str) -> bool:
+    if key in _PROGRAM_KEYS or key.startswith(("alias.", "pager.")):
+        return True
+    return "." in key and key.startswith(("filter.", "diff.", "merge.", "difftool.", "mergetool.", "credential.",
+                                          "remote.", "core.", "gpg.", "browser.", "man.", "trailer.", "submodule.")) and key.endswith(_PROGRAM_SUFFIXES)
+
+
+def _redirect_targets(top: Path) -> tuple[list[Path], list[Path]] | None:
+    """(hooks folders, configuration files) git uses for the working tree at ``top``, or None if git cannot say."""
+    cached = _TARGETS_CACHE.get(str(top))
+    if cached is not None and time.monotonic() - cached[0] < _CACHE_SECONDS:
+        return cached[1]
+    started = time.monotonic()
+    hooks_out = _git(top, "rev-parse", "--path-format=absolute", "--git-path", "hooks", timeout=_GIT_TIMEOUT_SECONDS)
+    remaining = _GIT_TIMEOUT_SECONDS - (time.monotonic() - started)
+    config_out = _git(top, "config", "--list", "--show-origin", "-z", timeout=remaining) if hooks_out is not None and remaining > 0 else None
+    if hooks_out is None or config_out is None:
+        _TARGETS_CACHE[str(top)] = (time.monotonic(), None)
+        return None
+    hooks = [Path(hooks_out.strip())] if hooks_out.strip() else []
+    files: list[Path] = []
+    # `--show-origin -z` emits: origin NUL key NEWLINE value NUL, repeated.
+    parts = config_out.split("\0")
+    for index in range(0, len(parts) - 1, 2):
+        origin, entry = parts[index], parts[index + 1]
+        key, _sep, value = entry.partition("\n")
+        origin_file = Path(origin[5:]) if origin.startswith("file:") else None
+        if origin_file is not None:
+            files.append(origin_file if origin_file.is_absolute() else top / origin_file)
+        lowered = key.casefold()
+        if value and (lowered == "include.path" or (lowered.startswith("includeif.") and lowered.endswith(".path"))):
+            named = Path(value).expanduser()
+            base = (files[-1].parent if origin_file is not None else top)
+            files.append(named if named.is_absolute() else base / named)
+        elif value and lowered == "core.hookspath":
+            named = Path(value).expanduser()
+            hooks.append(named if named.is_absolute() else top / named)
+        elif value and _runs_a_program(lowered):
+            # A setting that makes git run a program (core.fsmonitor, a filter or diff driver, ...): any file in the
+            # working tree its command line names is git's to run, not the file tools' to change -- named now or later.
+            for token in value.replace('"', " ").replace("'", " ").split():
+                if token.startswith("-") or token.startswith("!"):
+                    token = token.lstrip("!")
+                    if not token or token.startswith("-"):
+                        continue
+                named = Path(token).expanduser()
+                named = named if named.is_absolute() else top / named
+                with contextlib.suppress(OSError, ValueError):
+                    if named.resolve() == top.resolve() or top.resolve() in named.resolve().parents:
+                        files.append(named)
+    result = (hooks, files)
+    _TARGETS_CACHE[str(top)] = (time.monotonic(), result)
+    return result
+
+
+def _redirect_refusal(candidate: Path, forms: list[Path], top: Path) -> str:
+    targets = _redirect_targets(top)
+    if targets is None:
+        if _local_config_names_redirect(top):
+            return (f"{REFUSAL_PREFIX}: git could not say where the repository at `{top}` keeps its hooks and included "
+                    f"settings, and its configuration names them, so `{candidate}` was not written; nothing was touched.")
+        return ""
+    hooks, files = targets
+    for target in forms:
+        for folder in hooks:
+            for folder_form in _forms(folder):
+                if target == folder_form or folder_form in target.parents:
+                    return (f"{REFUSAL_PREFIX}: `{candidate}` is in the hooks folder git uses for this repository. File "
+                            "tools never change a repository's hooks; nothing was touched.")
+        for config in files:
+            if any(target == config_form for config_form in _forms(config)):
+                return (f"{REFUSAL_PREFIX}: `{candidate}` is a configuration file git reads for this repository. File "
+                        "tools never change a repository's own configuration; nothing was touched.")
+    return ""
 
 
 def refusal(path: str | Path) -> str:
     """'' when a generic tool may write ``path``; otherwise the refusal to report (nothing was touched)."""
     candidate = Path(str(path)).expanduser()
     for form in _forms(candidate):
-        if any(is_git_metadata_name(part) for part in form.parts):
-            break
-        if any(_is_git_directory(folder) for folder in (form, *form.parents)):
-            break
-    else:
-        return ""
-    return (f"{REFUSAL_PREFIX}: `{candidate}` is inside a git repository's metadata (.git: its hooks, config and "
-            "attributes are programs and settings git runs for you). Generic tools cannot change it; nothing was touched.")
+        if any(_is_dotgit(part) for part in form.parts):
+            return (f"{REFUSAL_PREFIX}: `{candidate}` is inside a repository's .git metadata. File tools never change "
+                    "a repository's own configuration or hooks; nothing was touched.")
+        for directory in (form, *form.parents):
+            if _is_git_directory(directory):
+                return (f"{REFUSAL_PREFIX}: `{candidate}` is inside a git repository directory. File tools never "
+                        "change a repository's own configuration or hooks; nothing was touched.")
+    forms = _forms(candidate)
+    tops = {str(top): top for top in (_worktree_top(form) for form in forms) if top is not None}
+    for top in tops.values():
+        reason = _redirect_refusal(candidate, forms, top)
+        if reason:
+            return reason
+    return ""
 
 
 __all__ = ["REFUSAL_PREFIX", "is_git_metadata_name", "refusal"]

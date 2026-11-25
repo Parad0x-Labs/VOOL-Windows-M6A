@@ -928,6 +928,7 @@
     "run.review_action": "Peržiūrėkite tikslų veiksmą žemiau.",
     "run.status_completed": "Atlikta",
     "run.status_stopped": "Sustabdyta",
+    "run.status_stopping": "Stabdoma…",
     "run.status_waiting": "Laukiama jūsų leidimo",
     "run.stop": "Stabdyti",
     "run.stop_title": "Sustabdyti šį ėjimą — atšaukia vykdomą užduotį jūsų kompiuteryje ir nutraukia atsakymą.",
@@ -2865,6 +2866,7 @@
     "chat_export.withheld_count": "{n, plural, one {{n} atsakymas neįtrauktas dėl privatumo taisyklių.} few {{n} atsakymai neįtraukti dėl privatumo taisyklių.} other {{n} atsakymų neįtraukta dėl privatumo taisyklių.}}",
     "online_access.open_setting": "Atidaryti „Prisijungti prie interneto savarankiškai“",
     "update.online_off": "Prieiga prie interneto išjungta, todėl VOOL netikrina atnaujinimų.",
+    "update.checks_off": "Atnaujinimų tikrinimas išjungtas",
     "vcs.online_off": "Prieiga prie interneto išjungta, todėl VOOL neskaito kalendorių iš interneto. Šio kompiuterio kalendoriai toliau veikia.",
     "chat.no_model.line_text": "Kad galėtų atsakyti, VOOL reikia DI modelio. Nustatymas užtrunka apie dvi minutes.",
     "chat.no_model.reply_body": "Nustatymas užtrunka apie dvi minutes: atidarykite sąranką ir pasirinkite, kur VOOL turėtų mąstyti. Jei šiame kompiuteryje jau turite modelių programą, pavyzdžiui, Ollama, atidarykite ją ir paklauskite dar kartą.",
@@ -2912,7 +2914,7 @@
     "settings.row.live_browser.help": "Peržiūrėkite kiekvieną veiksmą prieš jį vykdydami. Puslapių scenarijai išjungti. Mokėkite per piniginę.",
     "settings.row.live_browser.label": "Naršyklė"
   },
-  "source_catalog_sha256": "3cd1e12e773d8973743f0c662f74ecd14ad16cdcf25eacadaf60c3100639cf8d",
+  "source_catalog_sha256": "3dc0c0c6f48b71bc267e104a8c250ead42748619d22b729bb07b2e00f43980fa",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

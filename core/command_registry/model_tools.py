@@ -105,6 +105,7 @@ def execute_model_command(
 
     from core.command_registry.execute import ExecutionContext, execute_command
     from core.execution.models import ToolIntentExecution, _tool_observation
+    from core.request_trust import owner_peer_for_turn
     from core.runtime_execution_tools import _workspace_root
 
     command_id = command_id_for(intent)
@@ -126,10 +127,12 @@ def execute_model_command(
             principal="model",
             # scoped identity for the budget door's direct leg; with an active turn
             # ledger the gateway resolves the session/turn identity itself
+            # the turn's peer: the owner's only on an explicitly owner-local turn
             extra={
                 "session_id": str(session_id or ""),
                 "task_id": str(task_id or ""),
                 "bound_workspace_root": str(_workspace_root(source_context)),
+                "client_host": owner_peer_for_turn(source_context),
             },
         ),
     )
