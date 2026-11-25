@@ -110,6 +110,20 @@ def is_brake_command(user_text: str) -> bool:
     return bool(_STOPALL_RE.match(text) or _STOP_RE.match(text) or _START_RE.match(text))
 
 
+def _on_windows() -> bool:
+    """Whether the Windows wording applies (patched by tests through windows_write_gate._IS_WINDOWS)."""
+    try:
+        from core import windows_write_gate
+    except Exception:
+        return False
+    return windows_write_gate.active()
+
+
+def _say(mac: str, windows: str) -> str:
+    """On Windows the brake is the wallet freeze /unfreeze lifts; off Windows the Mac text, unchanged."""
+    return windows if _on_windows() else mac
+
+
 def _response(text: str, *, intent: str, success: bool = True) -> dict[str, Any]:
     return {
         "response": text,
@@ -274,14 +288,22 @@ def maybe_handle_agent_brake(
             )
         if was_frozen:
             return _response(
-                "x402 spending was already frozen. No payment or .null registration can go "
-                "through until you resume. Say /startx402 to resume.",
+                _say(
+                    "x402 spending was already frozen. No payment or .null registration can go "
+                    "through until you resume. Say /startx402 to resume.",
+                    "Payments were already frozen: the wallet freeze is on. No payment or .null "
+                    "registration can go through until you lift it. Type /unfreeze to lift it.",
+                ),
                 intent="agent_brake_stop",
             )
         return _response(
-            "x402 agent stopped. Spending is now frozen -- no x402 payment or .null "
-            "registration can go through until you resume. Your assistant and local model keep "
-            "running. Say /startx402 to resume.",
+            _say(
+                "x402 agent stopped. Spending is now frozen -- no x402 payment or .null "
+                "registration can go through until you resume. Your assistant and local model keep "
+                "running. Say /startx402 to resume.",
+                "The wallet freeze is on. No payment or .null registration can go through until you "
+                "lift it. Your assistant and local model keep running. Type /unfreeze to lift it.",
+            ),
             intent="agent_brake_stop",
         )
 
@@ -292,8 +314,12 @@ def maybe_handle_agent_brake(
         # spending frozen.
         if not owner_local:
             return _response(
-                "Resuming spending can only be done from your own local session. Spending "
-                "stays frozen. Say /startx402 from your local VOOL session to resume.",
+                _say(
+                    "Resuming spending can only be done from your own local session. Spending "
+                    "stays frozen. Say /startx402 from your local VOOL session to resume.",
+                    "The wallet freeze can only be lifted from your own local session, so payments "
+                    "stay frozen. Type /unfreeze in VOOL on this PC to lift it.",
+                ),
                 intent="agent_brake_start",
                 success=False,
             )
@@ -310,8 +336,12 @@ def maybe_handle_agent_brake(
             )
         if not granted:
             return _response(
-                "Resume was declined at the OS prompt, so spending stays frozen. Say /startx402 "
-                "and approve the prompt when you want to resume.",
+                _say(
+                    "Resume was declined at the OS prompt, so spending stays frozen. Say /startx402 "
+                    "and approve the prompt when you want to resume.",
+                    "Lifting the wallet freeze was declined at the Windows prompt, so payments stay "
+                    "frozen. Type /unfreeze and approve the prompt when you want to lift it.",
+                ),
                 intent="agent_brake_start",
                 success=False,
             )
@@ -327,12 +357,21 @@ def maybe_handle_agent_brake(
             )
         if not was_frozen:
             return _response(
-                "x402 spending was already active. Per-tx and daily/weekly caps still apply.",
+                _say(
+                    "x402 spending was already active. Per-tx and daily/weekly caps still apply.",
+                    "The wallet freeze was already off, so payments are already active. Per-payment "
+                    "and daily/weekly caps still apply.",
+                ),
                 intent="agent_brake_start",
             )
         return _response(
-            "x402 agent resumed. Spending is unfrozen; your per-tx and daily/weekly caps still "
-            "apply, and each spend is still gated by an OS approval prompt.",
+            _say(
+                "x402 agent resumed. Spending is unfrozen; your per-tx and daily/weekly caps still "
+                "apply, and each spend is still gated by an OS approval prompt.",
+                "Wallet freeze lifted. Payments can go through again; your per-payment and "
+                "daily/weekly caps still apply, and each payment still needs your OK at an approval "
+                "prompt.",
+            ),
             intent="agent_brake_start",
         )
 

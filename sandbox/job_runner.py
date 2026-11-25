@@ -1380,8 +1380,8 @@ class JobRunner:
             raise KernelIsolationUnavailableError(
                 f"Windows confinement runs Python and pytest jobs only for now: a Python job must be "
                 f"a .py script, -c code or -m pytest (or VOOL's own -m unittest and -m compileall), "
-                f"so {refused} is refused. VOOL 0.7.1 on "
-                "Windows refuses pip, ruff, venv and other Python modules. Run them under "
+                f"so {refused} is refused. On Windows, VOOL "
+                "refuses pip, ruff, venv and other Python modules. Run them under "
                 "WSL2/Linux instead. It was not run."
             )
         raise KernelIsolationUnavailableError(
@@ -1649,14 +1649,14 @@ class JobRunner:
 #: The plain answer when phase 1 does not run a program at all, given before any approval is asked
 #: or any model is called (`windows_program_refusal`). `{program}` is the program as the user typed it.
 WINDOWS_PROGRAM_REFUSED_TEXT = (
-    "On Windows, VOOL 0.7.1 runs only Python and pytest in its sandbox; it doesn't run {program}. "
+    "On Windows, VOOL runs only Python and pytest in its sandbox; it doesn't run {program}. "
     "Use WSL2/Linux for that. Nothing was run."
 )
 #: The plain answer when the program is a Python interpreter that is not the one running VOOL (a
 #: virtual environment's `Scripts\python.exe`, another install): phase 1 pins every Python job to
 #: this interpreter, so the refusal names it. `{interpreter}` is that interpreter's full path.
 WINDOWS_OTHER_PYTHON_REFUSED_TEXT = (
-    "On Windows, VOOL 0.7.1 runs Python only with its own interpreter, {interpreter} (ask for python "
+    "On Windows, VOOL runs Python only with its own interpreter, {interpreter} (ask for python "
     "or py and VOOL uses it); it doesn't run {program}. Use WSL2/Linux for other interpreters and "
     "virtual environments. Nothing was run."
 )

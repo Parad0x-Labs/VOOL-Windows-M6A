@@ -834,7 +834,7 @@ read_only_argv = hardened_argv
 # starts run under VoolConfine.
 
 GIT_REFUSED_STATUS = "git_refused_on_windows"
-GIT_REFUSED_TEXT = ("VOOL doesn't run git on Windows in 0.7.1; use WSL2/Linux for git. "
+GIT_REFUSED_TEXT = ("VOOL doesn't run git on Windows; use WSL2/Linux for git. "
                     "VOOL did not start git for this, so nothing was changed.")
 #: Set in the environment of an armed process so VOOL's own Python children arm themselves too.
 #: It can only turn the refusal on; nothing reads it to turn the refusal off.

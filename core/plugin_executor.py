@@ -67,7 +67,7 @@ _WINDOWS_REFUSES_BARE = os.name == "nt"
 #: MCP server, whatever the command (python, pythonw, py or a full path included): the VoolConfine
 #: launcher is proven only for VOOL's own Python/pytest sandbox jobs, and a plugin or MCP child is
 #: neither. The refusal happens before anything is spawned, including the launcher's own probe.
-WINDOWS_PLUGIN_MCP_REFUSAL = "VOOL doesn't start plugins or MCP servers on Windows in 0.7.1; use WSL2/Linux."
+WINDOWS_PLUGIN_MCP_REFUSAL = "VOOL doesn't start plugins or MCP servers on Windows; use WSL2/Linux."
 #: Patched by tests to drive the Windows decision on every platform.
 _WINDOWS_REFUSES_PLUGINS_AND_MCP = os.name == "nt"
 #: The result status of a plugin call Windows refused before anything started.

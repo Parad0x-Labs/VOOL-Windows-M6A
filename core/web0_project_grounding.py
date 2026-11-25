@@ -316,6 +316,22 @@ _STOPX402_CONTROL_ANSWER = (
     "(a SOL spend) can go through until you `/startx402`. Separately, the USDC x402 spend lane is "
     "disabled in this build. The assistant keeps running throughout."
 )
+# On Windows the brake is the wallet freeze that /unfreeze lifts (core/vool_agent_brake.py says the same).
+_STOPX402_CONTROL_ANSWER_WINDOWS = (
+    "`/stopx402` (or `/freeze`) turns on the wallet freeze at once, so no payment or `.null` "
+    "registration can go through until you type `/unfreeze`. Separately, the USDC x402 spend lane is "
+    "disabled in this build. The assistant keeps running throughout."
+)
+
+
+def _stopx402_control_answer() -> str:
+    """The Windows wording on Windows; off Windows the Mac text, unchanged."""
+    try:
+        from core import windows_write_gate
+    except Exception:
+        return _STOPX402_CONTROL_ANSWER
+    return _STOPX402_CONTROL_ANSWER_WINDOWS if windows_write_gate.active() else _STOPX402_CONTROL_ANSWER
+
 _CLOUD_POLICY_CONTROL_ANSWER = (
     "The cloud burst lane defaults to OFF and is fail-closed. Modes are `cloud off | ask | auto`; it "
     "spends your own cloud key (paid straight to the provider, no money through VOOL), capped rather "
@@ -438,7 +454,7 @@ def _vool_control_response(text: str) -> dict[str, Any] | None:
         }
 
     if _STOPX402_QUERY_RE.search(low):
-        return _pack(_STOPX402_CONTROL_ANSWER, "vool_stopx402_control")
+        return _pack(_stopx402_control_answer(), "vool_stopx402_control")
     if _SELF_CLAIM_QUERY_RE.search(low):
         return _pack(_SELF_CLAIM_CONTROL_ANSWER, "vool_settlement_self_claim")
     if _X402_AUTOCHARGE_QUERY_RE.search(low):
