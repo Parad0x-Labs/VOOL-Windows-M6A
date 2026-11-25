@@ -16,7 +16,7 @@ import pytest
 
 from core import plugin_executor, plugin_lifecycle
 
-REFUSAL = "VOOL doesn't start plugins or MCP servers on Windows in 0.7.1; use WSL2/Linux"
+REFUSAL = "VOOL doesn't start plugins or MCP servers on Windows; use WSL2/Linux"
 
 
 def _no_process_may_start(monkeypatch) -> None:

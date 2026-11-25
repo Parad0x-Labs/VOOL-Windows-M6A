@@ -61,7 +61,7 @@ ALLOWED_COMMANDS = ["python -c pass", "python hello.py", "py hello.py", "pytest 
 
 def _plain(program: str) -> str:
     return (
-        f"On Windows, VOOL 0.7.1 runs only Python and pytest in its sandbox; it doesn't run {program}. "
+        f"On Windows, VOOL runs only Python and pytest in its sandbox; it doesn't run {program}. "
         "Use WSL2/Linux for that. Nothing was run."
     )
 

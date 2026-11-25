@@ -27,7 +27,7 @@ from core.execution import mcp_bridge
 from core.mcp_client import MCPError, MCPStdioClient
 from sandbox import job_runner
 
-REFUSAL = "VOOL doesn't start plugins or MCP servers on Windows in 0.7.1; use WSL2/Linux"
+REFUSAL = "VOOL doesn't start plugins or MCP servers on Windows; use WSL2/Linux"
 
 
 class _ProcessStarted(AssertionError):
