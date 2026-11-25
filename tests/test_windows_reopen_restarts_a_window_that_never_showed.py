@@ -176,12 +176,52 @@ def test_a_young_host_that_shows_its_window_within_the_grace_is_kept(tmp_path) -
         running._stop_child("window")
 
 
-def test_without_a_reopen_request_a_hidden_host_is_left_alone(tmp_path) -> None:
+def test_without_a_reopen_request_a_hidden_host_is_started_again_once(tmp_path) -> None:
+    """0.7.3 row 7: after VOOL's own stop and start the host stayed hidden 661 s, until a launch."""
     running, popen, clock = _started(tmp_path)
     try:
-        clock.now += bundle_supervisor._HIDDEN_WINDOW_GRACE_SECONDS * 4
+        clock.now += bundle_supervisor._HIDDEN_WINDOW_GRACE_SECONDS + 5
+        _poll(running, popen, clock)
+        assert len(_window_launches(popen)) == 1     # no launch is waiting: a slow start gets longer
+        clock.now += bundle_supervisor._UNREQUESTED_HIDDEN_GRACE_SECONDS
+        _poll(running, popen, clock)
+        assert len(_window_launches(popen)) == 2
+        assert running.processes["window"].pid == 302
+        assert "never showed its window" in _log(running) and "no launch asked" in _log(running)
+        clock.now += bundle_supervisor._UNREQUESTED_HIDDEN_GRACE_SECONDS * 4
+        _poll(running, popen, clock)
+        _poll(running, popen, clock)
+        assert len(_window_launches(popen)) == 2     # once: a host that cannot show is not restarted forever
+        assert "left for the next launch" in _log(running)
+    finally:
+        running._stop_child("window")
+
+
+def test_without_a_reopen_request_a_host_that_shows_is_left_alone(tmp_path) -> None:
+    running, popen, clock = _started(tmp_path)
+    try:
+        running.window_shown_path.write_text("301\n", encoding="utf-8")
+        clock.now += bundle_supervisor._UNREQUESTED_HIDDEN_GRACE_SECONDS * 4
         _poll(running, popen, clock)
         assert len(_window_launches(popen)) == 1
+        assert "never showed" not in _log(running)
+    finally:
+        running._stop_child("window")
+
+
+def test_a_launch_after_the_unrequested_restart_still_restarts_a_hidden_host(tmp_path) -> None:
+    running, popen, clock = _started(tmp_path)
+    try:
+        clock.now += bundle_supervisor._UNREQUESTED_HIDDEN_GRACE_SECONDS + 5
+        _poll(running, popen, clock)
+        assert len(_window_launches(popen)) == 2
+        clock.now += bundle_supervisor._UNREQUESTED_HIDDEN_GRACE_SECONDS * 2
+        _poll(running, popen, clock)
+        assert len(_window_launches(popen)) == 2
+        running._request_window_reopen()
+        _poll(running, popen, clock)
+        assert len(_window_launches(popen)) == 3     # the user asked: the 30 s rule applies again
+        assert running.processes["window"].pid == 303
     finally:
         running._stop_child("window")
 
