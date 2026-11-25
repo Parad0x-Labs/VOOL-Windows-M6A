@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -135,7 +136,13 @@ def _table_columns(conn: Any) -> set[str]:
 def _add_column_if_missing(conn: Any, name: str, definition: str) -> None:
     columns = _table_columns(conn)
     if name not in columns:
-        conn.execute(f"ALTER TABLE model_provider_manifests ADD COLUMN {name} {definition}")
+        try:
+            conn.execute(f"ALTER TABLE model_provider_manifests ADD COLUMN {name} {definition}")
+        except sqlite3.OperationalError as exc:
+            # Mac 0.7.5: upgrading a store from before the column existed, concurrent first reads all see it
+            # missing, one ALTER wins and the others get "duplicate column name". The column is there either way.
+            if "duplicate column name" not in str(exc) or name not in _table_columns(conn):
+                raise
 
 
 #: Databases whose manifest table this process has set up. Measured 2026-10-21 (CI run 39536779199): the setup ran
@@ -145,18 +152,37 @@ _READY: set[str] = set()
 _READY_LOCK = threading.Lock()
 
 
-def _init_table(db_path: str) -> None:
-    """Set up the manifest table once per database path, under the database's write lock.
+def _retry_on_schema_change(operation: Callable[[], _T]) -> _T:
+    # Mac 0.7.5: while a new daemon is starting, other services are still creating their own tables in the same
+    # WAL store, and SQLite can answer a statement here with "database schema has changed". Every operation below
+    # is idempotent, so a short retry is safe. On top of the port's transactions it is a second line of defence.
+    for attempt in range(5):
+        try:
+            return operation()
+        except sqlite3.OperationalError as exc:
+            if "schema has changed" not in str(exc) or attempt == 4:
+                raise
+            time.sleep(0.05 * (attempt + 1))
+    raise AssertionError("unreachable")
+
+
+def _init_table(db_path: str | None = None) -> None:
+    """Set up the manifest table now (no memo), under the database's write lock, retrying a schema change.
 
     BEGIN IMMEDIATE takes the write lock before any statement, so another connection's schema commit lands wholly
-    before or after the setup instead of under it.
+    before or after the setup instead of under it. With no path it sets up the active database (Mac's form).
     """
+    _retry_on_schema_change(_create_table if db_path is None else (lambda: _create_table(db_path)))
+
+
+def _ensure_table(db_path: str) -> None:
+    """Set up the manifest table once per database path."""
     if db_path in _READY:
         return
     with _READY_LOCK:
         if db_path in _READY:
             return
-        _create_table(db_path)
+        _init_table(db_path)
         _READY.add(db_path)
 
 
@@ -167,16 +193,16 @@ def _with_table(work: Callable[[sqlite3.Connection], _T], *, write: bool = False
     is set up again, once, and ``work`` runs again.
     """
     db_path = active_default_db_path()
-    _init_table(db_path)
+    _ensure_table(db_path)
     try:
-        return _run(db_path, work, write=write)
+        return _retry_on_schema_change(lambda: _run(db_path, work, write=write))
     except sqlite3.OperationalError as exc:
         if "no such table: model_provider_manifests" not in str(exc):
             raise
     with _READY_LOCK:
         _READY.discard(db_path)
-    _init_table(db_path)
-    return _run(db_path, work, write=write)
+    _ensure_table(db_path)
+    return _retry_on_schema_change(lambda: _run(db_path, work, write=write))
 
 
 def _run(db_path: str, work: Callable[[sqlite3.Connection], _T], *, write: bool = False) -> _T:
@@ -196,8 +222,8 @@ def _run(db_path: str, work: Callable[[sqlite3.Connection], _T], *, write: bool 
         conn.close()
 
 
-def _create_table(db_path: str) -> None:
-    conn = get_connection(db_path)
+def _create_table(db_path: str | None = None) -> None:
+    conn = get_connection(db_path if db_path is not None else active_default_db_path())
     try:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute(
@@ -280,6 +306,10 @@ def upsert_provider_manifest(manifest: ModelProviderManifest) -> None:
 
 
 def list_provider_manifests(*, enabled_only: bool = False, limit: int = 256) -> list[ModelProviderManifest]:
+    return _retry_on_schema_change(lambda: _list(enabled_only=enabled_only, limit=limit))
+
+
+def _list(*, enabled_only: bool, limit: int) -> list[ModelProviderManifest]:
     where = "WHERE enabled = 1" if enabled_only else ""
 
     def work(conn: sqlite3.Connection) -> list[ModelProviderManifest]:

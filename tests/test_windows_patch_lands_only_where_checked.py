@@ -14,8 +14,9 @@ What this file pins:
 - A chat whose workspace is a repository's top is refused before any approval is asked when only a
   subfolder of it is flagged.
 - Every path a patch's `---`/`+++` lines name is placed before any engine runs. One outside the
-  workspace or inside VOOL's own state is refused as `invalid_arguments` with nothing written, with the
-  gate on and off, and the effect ledger holds a failure that is safe to retry.
+  workspace or inside VOOL's own state is refused with nothing written (with the gate on as
+  `invalid_arguments`, with it off as Mac 0.7.5's `workspace_path_refused`), and the effect ledger holds
+  a failure that is safe to retry.
 - On Windows a chat's patch goes through VOOL's own engine only (reported as `protected_python`). A
   rename and a deletion are refused before any byte moves; a file with CRLF line endings is refused
   (`workspace.replace_in_file` still edits it); a patch that creates a file must name one that does not
@@ -438,8 +439,13 @@ def test_a_patch_whose_second_file_may_not_be_changed_writes_nothing_and_can_be_
 
     execution = chat.run(PATCH, arguments, untouched=(first, guarded))
 
-    assert execution.status == "invalid_arguments", (execution.status, execution.response_text)
-    assert f"`{named}`" in execution.response_text and "Nothing was written" in execution.response_text, execution.response_text
+    if platform == "windows":
+        assert execution.status == "invalid_arguments", (execution.status, execution.response_text)
+        assert "Nothing was written" in execution.response_text, execution.response_text
+    else:  # Mac 0.7.5 refuses a patch naming any refused path before any engine runs, in its own words
+        assert execution.status == "workspace_path_refused", (execution.status, execution.response_text)
+        assert "I did not apply this patch" in execution.response_text, execution.response_text
+    assert f"`{named}`" in execution.response_text, execution.response_text
     assert reason in execution.response_text, execution.response_text
     assert first.read_bytes() == NOTES and _identity(first) == first_identity, "the first file must not be touched"
     assert guarded.read_bytes() == b"keep out\n" and _identity(guarded) == guarded_identity
@@ -449,7 +455,7 @@ def test_a_patch_whose_second_file_may_not_be_changed_writes_nothing_and_can_be_
     # blocked as a retry of an outcome VOOL cannot tell.
     again = chat.see_through(PATCH, arguments)
 
-    assert again.status == "invalid_arguments", (again.status, again.response_text)
+    assert again.status == execution.status, (again.status, again.response_text)
     assert first.read_bytes() == NOTES and guarded.read_bytes() == b"keep out\n"
     _assert_refused_without_a_record(again, chat, PATCH, arguments)
 

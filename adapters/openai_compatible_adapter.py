@@ -196,6 +196,25 @@ def _request_timeout(read_timeout: float) -> tuple[float, float]:
     return (min(10.0, read_timeout), read_timeout)
 
 
+def _person_cancel_check(request: ModelRequest):
+    """The person's cancel for the provider transfer, or None when the request carries none.
+
+    The router's cancel check also turns true once the turn deadline passes. That expiry keeps
+    ending the call through its clamped transport timeout (a typed timeout), so it is left out.
+    """
+    if getattr(request, "cancel_check", None) is None:
+        return None
+    from core.provider_call_deadline import deadline_expired
+
+    return lambda: request.is_cancelled() and not deadline_expired(request)
+
+
+def _cancel_option(request: ModelRequest) -> dict[str, Any]:
+    """The transfer option that lets a Stop end the call in flight; empty when there is no cancel."""
+    check = _person_cancel_check(request)
+    return {"cancel_check": check} if check is not None else {}
+
+
 def _assert_response_timely(request: ModelRequest, response: Any) -> None:
     """Expiry revokes publication even when transport returned without timing out."""
     from core.provider_call_deadline import ProviderCallDeadlineExceededError, effective_timeout_seconds
@@ -558,6 +577,7 @@ class OpenAICompatibleAdapter(ModelAdapter):
                     json=permit.consume(),
                     headers=headers,
                     timeout=_request_timeout(timeout_seconds),
+                    **_cancel_option(request),
                 )
                 _assert_response_timely(request, response)
                 if reasoning_try == 0 and _reasoning_mandatory_refusal(response, payload):
@@ -803,7 +823,6 @@ class OpenAICompatibleAdapter(ModelAdapter):
         # stop generating, and the slot is released here instead of when the answer would have
         # finished (clean-VM job 52: RUN stayed lit and the next reply queued ~6 min). The sealed
         # body is unchanged; only who may end the wait is.
-        cancel_options = {"cancel_check": request.is_cancelled} if request.cancel_check is not None else {}
         with local_model_slot(provider_id=self.manifest.provider_id):
             timeout_seconds = effective_timeout_seconds(request, timeout_seconds)
             body = permit.consume()
@@ -813,11 +832,11 @@ class OpenAICompatibleAdapter(ModelAdapter):
                     json=body,
                     headers=headers,
                     timeout=_request_timeout(timeout_seconds),
-                    **cancel_options,
+                    **_cancel_option(request),
                 )
             except requests.TransferCancelled:
-                # The router's check also fires on an expired provider deadline; that stays the
-                # deadline error it always was, and only a real Stop reads as a cancellation.
+                # A real Stop reads as a cancellation; an expired provider deadline stays the deadline
+                # error it always was (the person's check leaves expiry out, and this re-checks it).
                 effective_timeout_seconds(request, 0.001)
                 raise RuntimeError("model_call_cancelled") from None
             _assert_response_timely(request, response)
@@ -927,6 +946,7 @@ class OpenAICompatibleAdapter(ModelAdapter):
             headers=headers,
             timeout=_request_timeout(timeout_seconds),
             stream=True,
+            **_cancel_option(request),
         )
         _assert_response_timely(request, response)
         _raise_for_status_with_cause(response)
@@ -1053,6 +1073,7 @@ class OpenAICompatibleAdapter(ModelAdapter):
                 headers=headers,
                 timeout=_request_timeout(timeout_seconds),
                 stream=True,
+                **_cancel_option(request),
             )
             _assert_response_timely(request, response)
             _raise_for_status_with_cause(response)

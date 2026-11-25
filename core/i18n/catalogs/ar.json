@@ -928,6 +928,7 @@
     "run.review_action": "راجع الإجراء المحدد أدناه.",
     "run.status_completed": "اكتمل",
     "run.status_stopped": "متوقف",
+    "run.status_stopping": "جارٍ الإيقاف…",
     "run.status_waiting": "بانتظار موافقتك",
     "run.stop": "إيقاف",
     "run.stop_title": "إيقاف هذا الدور — يلغي المهمة الجارية على جهازك ويوقف الإجابة.",
@@ -2865,6 +2866,7 @@
     "chat_export.withheld_count": "{n, plural, zero {لا توجد إجابات مستبعدة بسبب سياسة الخصوصية.} one {إجابة واحدة غير مُضمَّنة بسبب سياسة الخصوصية.} two {إجابتان غير مُضمَّنتين بسبب سياسة الخصوصية.} few {{n} إجابات غير مُضمَّنة بسبب سياسة الخصوصية.} many {{n} إجابة غير مُضمَّنة بسبب سياسة الخصوصية.} other {{n} إجابة غير مُضمَّنة بسبب سياسة الخصوصية.}}",
     "online_access.open_setting": "فتح «الاتصال بالإنترنت تلقائيًا»",
     "update.online_off": "الوصول إلى الإنترنت متوقف، لذلك لا يتحقق VOOL من التحديثات.",
+    "update.checks_off": "التحقق من التحديثات متوقف",
     "vcs.online_off": "الوصول إلى الإنترنت متوقف، لذلك لا يقرأ VOOL التقاويم من الإنترنت. تبقى التقاويم الموجودة على هذا الكمبيوتر تعمل.",
     "chat.no_model.line_text": "يحتاج VOOL إلى نموذج ذكاء اصطناعي قبل أن يتمكن من الإجابة. يستغرق إعداده حوالي دقيقتين.",
     "chat.no_model.reply_body": "يستغرق الإعداد حوالي دقيقتين: افتح الإعداد واختر أين يفكّر VOOL. إذا كان لديك بالفعل تطبيق نماذج على هذا الكمبيوتر، مثل Ollama، فافتحه واسأل مرة أخرى.",
@@ -2912,7 +2914,7 @@
     "settings.row.live_browser.help": "راجع كل إجراء قبل تنفيذه. برامج الصفحات معطلة. استخدم المحفظة للدفع.",
     "settings.row.live_browser.label": "المتصفح"
   },
-  "source_catalog_sha256": "3cd1e12e773d8973743f0c662f74ecd14ad16cdcf25eacadaf60c3100639cf8d",
+  "source_catalog_sha256": "3dc0c0c6f48b71bc267e104a8c250ead42748619d22b729bb07b2e00f43980fa",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
