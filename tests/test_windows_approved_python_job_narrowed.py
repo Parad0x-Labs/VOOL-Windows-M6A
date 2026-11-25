@@ -209,9 +209,11 @@ def test_off_windows_an_approved_command_is_asked_about_again_as_on_base(off_win
 
     resumed = _run(approved, _context(session, turn, workspace, token))
 
-    assert resumed.status == "user_action_required", (resumed.status, resumed.response_text)
-    assert "Command requires explicit user approval." in resumed.response_text
-    assert jobs == []
+    # Off Windows the gate is as Mac 0.7.3 ships it: the controller's ALLOW for this dispatch
+    # (publish_command_authorization) stands behind exactly the approved command, so one Allow runs
+    # it once. (Before 0.7.3, base asked again; Jesse's re-pin OK, 16 Nov 17:30Z.)
+    assert resumed.status == "executed", (resumed.status, resumed.response_text)
+    assert len(jobs) == 1, jobs
 
 
 # --- (c) Auto mode, recorded as it is today --------------------------------------------------------

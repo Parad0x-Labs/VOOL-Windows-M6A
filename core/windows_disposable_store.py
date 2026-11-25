@@ -14,6 +14,9 @@ also be marked from the VOOL window, with an OS confirmation. This module is tha
   NOTHING and is reported: unknown states fail closed, exactly as a corrupt file does.
 - The file only ever ADDS candidates. Every entry still has to pass the gate's own ``_windows_root``
   (and the broker's checks when it runs), plus ``refusal_reason`` here, re-checked on every read.
+- The known folders are asked once per check (owner decision D13 A). A PC without OneDrive can
+  mark; a known-folder lookup that fails or errors (OneDrive included) refuses; and while any
+  known folder is redirected away from its usual place in the profile, no folder is marked.
 - Adds take effect at the next start: the broker's list is fixed when it starts
   (docs/WINDOWS_BROKER.md section 4), so the gate takes the file's entries as they were at start
   (``start_folders``). An unmark shrinks at once: a start entry no longer in the live file is
@@ -49,6 +52,19 @@ _KNOWN_EXACT = ("Profile", "Desktop", "Documents", "Downloads", "Pictures", "Mus
 #: Known folders nothing may be marked at, under, or above.
 _KNOWN_SEALED = ("LocalAppData", "RoamingAppData", "ProgramData", "Windows",
                  "ProgramFiles", "ProgramFilesX86")
+#: The only known folder a PC may simply not have (owner decision D13 A): without OneDrive there is
+#: no OneDrive folder, and marking still works. A FAILED lookup of it still refuses.
+_KNOWN_OPTIONAL = ("OneDrive",)
+#: Where a known folder sits under the profile when nothing moved it. One that the shell reports
+#: anywhere else (folder redirection, the Location tab, OneDrive folder backup) is redirected, and
+#: while any is, the layout the checks below rely on is unclear: no folder is marked (D13 A).
+#: LocalAppData is left out: Windows offers no way to move it, and the system temp folder rules
+#: below already judge what sits in it.
+_DEFAULT_UNDER_PROFILE = {
+    "Desktop": "Desktop", "Documents": "Documents", "Downloads": "Downloads",
+    "Pictures": "Pictures", "Music": "Music", "Videos": "Videos",
+    "RoamingAppData": "AppData\\Roaming",
+}
 
 #: The file's entries as they were when this process first took them (the start list), per file.
 _START: dict[str, list[str]] = {}
@@ -102,8 +118,67 @@ def _known(name: str) -> str | None:
     return windows_known_folders.known_folder(name)
 
 
+def _known_answers() -> tuple[dict[str, str], str]:
+    """(answers, problem): every known folder this module judges by, each asked ONCE, so one check
+    never mixes a lookup that answered with a later one of the same folder that did not. ``problem``
+    is why nothing may be marked: a lookup that failed or errored (OneDrive included), or a folder
+    other than OneDrive that Windows says this PC does not have. A folder the lookup left no word
+    about (nothing asked, off Windows) is simply not in ``answers``, as before."""
+    from core import windows_known_folders as kf
+
+    answers: dict[str, str] = {}
+    problem = ""
+    for name in dict.fromkeys(("Profile", *_KNOWN_EXACT, *_KNOWN_SEALED)):
+        kf.clear_outcome(name)
+        found = _known(name)
+        if found:
+            answers[name] = found
+            continue
+        ended = kf.outcome(name)
+        if problem or name == "Profile":
+            continue  # the profile has its own answer in refusal_reason
+        if ended.startswith(kf.FAILED):
+            problem = f"Windows could not say where your {name} folder is ({ended}); nothing is marked until it can"
+        elif ended == kf.ABSENT and name not in _KNOWN_OPTIONAL:
+            problem = f"Windows says this PC has no {name} folder, so the folders VOOL protects are unclear"
+    return answers, problem
+
+
+def _redirected(answers: dict[str, str]) -> str:
+    """Why a known folder counts as redirected (not where it sits under the profile when nothing
+    moved it, judged on resolved paths), or ''. A folder that cannot be resolved counts as moved."""
+    profile = answers.get("Profile", "")
+    for name, default in _DEFAULT_UNDER_PROFILE.items():
+        found = answers.get(name)
+        if not found:
+            continue
+        usual = ntpath.join(profile, default)
+        try:
+            # A junction or link at the answer or at the usual place moves the folder too, even
+            # when the answer is the usual spelling: realpath follows both to the same target.
+            moved = (_is_link_itself(found) or _is_link_itself(usual)
+                     or _norm(_real(found)) != _norm(_real(usual)))
+        except (OSError, ValueError):
+            moved = True
+        if moved:
+            return (f"your {name} folder is redirected to {found}; while a Windows folder is moved away "
+                    "from your profile VOOL marks no folder")
+    return ""
+
+
 def _real(value: str) -> str:
     return os.path.realpath(value)
+
+
+def _is_link_itself(path: str) -> bool:
+    """Whether ``path`` itself (not followed) is a link, a junction or, on Windows, a reparse point
+    other than a cloud-sync placeholder. A folder that is not there is not a link: realpath judges it."""
+    if not os.path.lexists(path):
+        return False
+    isjunction = getattr(os.path, "isjunction", None)
+    if os.path.islink(path) or (isjunction is not None and isjunction(path)):
+        return True
+    return _IS_NT and _reparse_attribute(path)
 
 
 #: IO_REPARSE_TAG_CLOUD and CLOUD_1..CLOUD_F (OneDrive Files-On-Demand placeholders) share this
@@ -160,31 +235,36 @@ def _with_real(folders: list[str]) -> list[str]:
     return out
 
 
-def appdata_family() -> list[str]:
+def appdata_family(known: dict[str, str] | None = None) -> list[str]:
     """LocalAppData, RoamingAppData and Profile\\AppData: the only sealed folders a temp subfolder
-    may sit inside (the system temp folder normally lives in LocalAppData)."""
-    family = [found for found in (_known("LocalAppData"), _known("RoamingAppData")) if found]
-    profile = _known("Profile")
+    may sit inside (the system temp folder normally lives in LocalAppData). ``known``: answers
+    already asked (``_known_answers``), so nothing is looked up twice."""
+    ask = known.get if known is not None else _known
+    family = [found for found in (ask("LocalAppData"), ask("RoamingAppData")) if found]
+    profile = ask("Profile")
     if profile:
         family.append(ntpath.join(profile, "AppData"))
     return _with_real(family)
 
 
-def protected_folders(extra: tuple[str, ...] = ()) -> tuple[list[str], list[str], list[str]]:
+def protected_folders(extra: tuple[str, ...] = (), known: dict[str, str] | None = None
+                      ) -> tuple[list[str], list[str], list[str]]:
     """(sealed, exact, temp_roots): folders nothing may be marked at/under/above, folders that may
     only hold a marked folder, and the system temp root (``tempfile.gettempdir``, Windows'
-    GetTempPath; a folder strictly inside it may lift the AppData family only)."""
+    GetTempPath; a folder strictly inside it may lift the AppData family only). ``known``: answers
+    already asked (``_known_answers``), so nothing is looked up twice."""
+    ask = known.get if known is not None else _known
     sealed: list[str] = []
     exact: list[str] = []
-    profile = _known("Profile")
+    profile = ask("Profile")
     for name in _KNOWN_SEALED:
-        found = _known(name)
+        found = ask(name)
         if found:
             sealed.append(found)
     if profile:
         sealed.extend(ntpath.join(profile, name) for name in _PROFILE_PRIVATE)
     for name in _KNOWN_EXACT:
-        found = _known(name)
+        found = ask(name)
         if found:
             exact.append(found)
     system_root = os.environ.get("SystemRoot") or os.environ.get("windir") or ""
@@ -235,11 +315,18 @@ def refusal_reason(path: str, *, extra_sealed: tuple[str, ...] = ()) -> str:
         return "VOOL could not tell where its home folder is"
     if not home.strip():
         return "VOOL could not tell where its home folder is"
-    if not _known("Profile"):
+    known, lookup_problem = _known_answers()
+    if not known.get("Profile"):
         # Without the profile its private folders (.ssh, AppData, ...) cannot be sealed: refuse.
         return "Windows did not say where your profile folder is"
+    if lookup_problem:
+        # A failed lookup is an unknown state: refuse (D13 A). Only a PC without OneDrive passes.
+        return lookup_problem
+    redirected = _redirected(known)
+    if redirected:
+        return redirected
     app_root = str(Path(__file__).resolve().parents[1])
-    sealed, exact, temp_roots = protected_folders((home, app_root, *extra_sealed))
+    sealed, exact, temp_roots = protected_folders((home, app_root, *extra_sealed), known)
     for temp in temp_roots:
         if _holds(real, temp):
             return "it is or holds the temporary-files folder"
@@ -247,7 +334,7 @@ def refusal_reason(path: str, *, extra_sealed: tuple[str, ...] = ()) -> str:
     # AppData -- but that lifts ONLY the AppData family, never VOOL home, the app, a caller's
     # sealed folder or a credential folder, wherever TEMP points.
     temp_of = [t for t in temp_roots if _at_or_under(real, t)]
-    liftable = {_norm(f) for f in appdata_family()} if temp_of else set()
+    liftable = {_norm(f) for f in appdata_family(known)} if temp_of else set()
     for folder in sealed:
         if _holds(real, folder):
             return f"it is or holds {folder}"

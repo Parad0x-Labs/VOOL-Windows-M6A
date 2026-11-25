@@ -152,10 +152,11 @@ class WindowsCredentialManager:
     non_interactive = True
     display_name = "Windows Credential Manager"
 
-    def __init__(self, api: Any, *, service: str, store: str = CREDENTIALS_STORE) -> None:
+    def __init__(self, api: Any, *, service: str, store: str = CREDENTIALS_STORE, comment: str = "VOOL API key") -> None:
         self._api = api
         self._service = service
         self._prefix = f"{TARGET_ROOT}/{store}/"
+        self._comment = comment
 
     # ------------------------------------------------------------------ helpers
 
@@ -183,7 +184,7 @@ class WindowsCredentialManager:
         cred.Flags = 0
         cred.Type = CRED_TYPE_GENERIC
         cred.TargetName = target
-        cred.Comment = "VOOL API key"
+        cred.Comment = self._comment
         cred.CredentialBlobSize = len(blob)
         cred.CredentialBlob = ctypes.cast(buffer, ctypes.POINTER(ctypes.c_ubyte))
         cred.Persist = CRED_PERSIST_LOCAL_MACHINE

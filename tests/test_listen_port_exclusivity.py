@@ -85,6 +85,13 @@ def _free_port() -> int:
         return int(probe.getsockname()[1])
 
 
+def _free_udp_port() -> int:
+    # A port free for TCP can be held for UDP (run 43933631045: WinError 10048 on a TCP-picked port).
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
 @contextlib.contextmanager
 def _stream_tls_disabled():
     """Pin the policy baseline the way the suite's conftest does: the shipped
@@ -332,7 +339,7 @@ def test_a_live_fixed_port_udp_transport_port_cannot_be_double_bound():
     # The fixed-port path (network/transport.py start, requested_port > 0):
     # the UDP socket binds exactly (host, requested_port).
     with _stream_tls_disabled():
-        transport = UDPTransportServer(host="127.0.0.1", port=_free_port())
+        transport = UDPTransportServer(host="127.0.0.1", port=_free_udp_port())
         runtime = transport.start()
         try:
             assert runtime.port is not None

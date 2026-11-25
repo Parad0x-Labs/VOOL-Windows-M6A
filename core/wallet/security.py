@@ -29,4 +29,21 @@ def wallet_fault(code: str, *, authority: str, context: dict[str, Any] | None = 
         fault_id = record_fault(record)
     except Exception:
         fault_id = ""
+    if code == "wallet_limit_exceeded" and str(clean_context.get("limit") or "") == "frozen" and _windows():
+        # The panic freeze refuses through the limit fault (limits.LIMIT_FROZEN), whose catalog sentence says the payment
+        # is above a spending limit. Steve row 38 (0.7.3 at 8987cac7): "send Testy 1 USDT" with the freeze on was told
+        # exactly that, with every limit far above 1 USDT. On Windows the person is told the freeze is why.
+        message = FROZEN_MESSAGE
     return WalletFault(code, context=clean_context, fault_id=fault_id, message=message)
+
+
+FROZEN_MESSAGE = "Payments are frozen (panic freeze is on), so it was not sent. Type /unfreeze to lift it."
+
+
+def _windows() -> bool:
+    try:
+        from core import windows_write_gate
+
+        return windows_write_gate.active()
+    except Exception:
+        return False

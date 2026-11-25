@@ -33,7 +33,7 @@ _FAULT_REMEDIATIONS = {
     "evidence_missing": ("run the real action first; the pact never fakes a step",),
     "evidence_unverifiable": ("the evidence did not verify; retry the real action or skip",),
     "evidence_session_unknown": ("that chat has no receipt ledger here",),
-    "not_applicable_readonly": ("replay the tour from Settings → Show me around",),
+    "not_applicable_readonly": ("replay the tour from Settings → Show me around",),  # Windows: see _remediation
     "boundary_key_unknown": ("use local_only_composite, memory_paused, web_lookups or automatic_checks",),
     "pact_absent": ("the tour seed has not run yet; re-poll in a moment",),
     "lock_unavailable": ("another window is publishing; retry in a moment",),
@@ -1118,7 +1118,7 @@ def register(reg) -> None:
         CommandSpec(
             command_id="first_run.pact.begin",
             group=GROUP_ID,
-            description="Start or replay the tour (Settings → Show me around)",
+            description=_tour_begin_description(),
             input_schema=RevisionInput,
             effects="mutating",
             permission=pact_perm,
@@ -1406,9 +1406,33 @@ def register(reg) -> None:
         reg.add(spec)
 
 
+#: Windows Settings has no "Show me around" entry (Steve, 15 Nov). The command description is
+#: developer-facing and names the begin endpoint this group registers; the remediation is read in
+#: chat, so it says plainly that the tour is not in the Windows app yet.
+_WINDOWS_TOUR_BEGIN = "POST /api/onboarding/pact/begin"
+
+
+def _on_windows() -> bool:
+    from core import windows_write_gate
+
+    return windows_write_gate.active()
+
+
+def _tour_begin_description() -> str:
+    if _on_windows():
+        return f"Start or replay the tour ({_WINDOWS_TOUR_BEGIN})"
+    return "Start or replay the tour (Settings → Show me around)"
+
+
+def _remediation(code: str) -> tuple[str, ...]:
+    if code == "not_applicable_readonly" and _on_windows():
+        return ("the tour isn't available in the Windows app in this version",)
+    return _FAULT_REMEDIATIONS.get(code, ("retry or skip the step",))
+
+
 def _bindings(*codes: str) -> tuple[FaultBinding, ...]:
     return tuple(
-        FaultBinding(when=code, fault_code="conflict", remediation=_FAULT_REMEDIATIONS.get(code, ("retry or skip the step",)))
+        FaultBinding(when=code, fault_code="conflict", remediation=_remediation(code))
         for code in codes
     )
 

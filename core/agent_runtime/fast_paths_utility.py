@@ -87,6 +87,44 @@ _TIME_FOLLOWUP_EXCLUSION_MARKERS = (
 )
 _FILE_TOKEN = r"[A-Za-z0-9_./-]+\.(?:toml|json|ya?ml|md|txt|py|ts|tsx|js|jsx)"
 _WORKSPACE_READ_FILE_RE = re.compile(rf"(?P<path>{_FILE_TOKEN})")
+# On Windows a file token can be the tail of a backslash path, which _FILE_TOKEN cannot span. So
+# "send the file C:\Users\me\Documents\VOOL Windows\marked\drop-test.txt" matched only
+# `drop-test.txt`, the rooted-path stand-down below never saw the drive, and the lane answered
+# "There is no file at `drop-test.txt` in `C:\Users\me\Desktop`" about the chat's folder
+# (Steve row 10, 0.7.3 at ab0ca48c, 23 Nov 2026). A drive or share start with no path-illegal
+# character before the token makes it rooted, spaces included; a relative backslash path is
+# kept whole, with forward slashes.
+_WINDOWS_ROOT_START_RE = re.compile(r"\b[A-Za-z]:[\\/]|\\\\")
+_WINDOWS_PATH_ENDS_RE = re.compile(r'[\n"<>|?*:]')
+_WINDOWS_RELATIVE_HEAD_RE = re.compile(r"[A-Za-z0-9_.\\/-]*\\$")
+_NAMED_FILE_ENDS_RE = re.compile(r"\.(?:toml|json|ya?ml|md|txt|py|ts|tsx|js|jsx)\s", re.IGNORECASE)
+
+
+def _windows_token_path(text: str, start: int, token: str) -> str | None:
+    """On Windows, the path a file token at `start` stands for: None when it ends a rooted (drive or
+    share) path, which is the machine lanes' to answer; the whole relative path when backslashes join
+    it to more of one; otherwise the token. Off Windows, always the token."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return token
+    head = str(text or "")[max(0, start - 4096):start]  # bounded: the regexes below scan back from the token
+    if not head.endswith(("\\", "/")):
+        return token
+    # The nearest drive or share start before the token roots it when nothing between them ends the
+    # path: no path-illegal character, and no named file ending ("read C:\\x\\e.txt and f\\g.txt" names
+    # two paths, and the second is relative).
+    starts = list(_WINDOWS_ROOT_START_RE.finditer(head))
+    if starts:
+        between = head[starts[-1].end():]
+        if not _WINDOWS_PATH_ENDS_RE.search(between) and not _NAMED_FILE_ENDS_RE.search(between):
+            return None
+    relative = _WINDOWS_RELATIVE_HEAD_RE.search(head)
+    if relative is None:
+        return token
+    return (relative.group(0) + token).replace("\\", "/")
+
+
 # A named file with a MUTATION intent is not a read -- defer to the writer/builder lanes.
 _WORKSPACE_MUTATION_INTENT_RE = re.compile(
     r"\b(?:creat|mak|writ|edit|modif|renam|mov|delet|remov|append|replac|updat|sav|generat|"
@@ -1285,7 +1323,9 @@ def _direct_workspace_read_request(user_input: str) -> dict[str, object] | None:
     # answered "File `setup.py` does not exist."
     if _asks_about_a_kind_of_file(text):
         return None
-    path = match.group("path").strip()
+    path = _windows_token_path(text, match.start("path"), match.group("path").strip())
+    if path is None:
+        return None
     # A ROOTED path is not this lane's to answer. `workspace.read_file` resolves against the
     # workspace root, so the old `.lstrip("/")` turned "/tmp/vool_qa_build13/config.yaml" into the
     # workspace-relative "tmp/vool_qa_build13/config.yaml" and replied "File
@@ -1360,7 +1400,9 @@ def _direct_workspace_read_requests(user_input: str) -> list[dict[str, object]]:
 
     seen: list[str] = []
     for match in re.finditer(_FILE_TOKEN, text, re.IGNORECASE):
-        candidate = match.group(0).strip()
+        candidate = _windows_token_path(text, match.start(), match.group(0).strip())
+        if candidate is None:
+            continue
         # Same stand-down as the single-file front door: a rooted path belongs to the machine-read
         # lane, which understands host paths. Skipping it here (rather than declining the whole
         # turn) keeps "read notes.txt and /etc/hosts" answering for the file this lane owns.
@@ -1423,13 +1465,14 @@ def _per_unit_line_windows(user_input: str) -> dict[str, tuple[int, int]]:
             r"\g<stem>.\g<ext>", normalized
         )
         named = [
-            match.group(0).strip()
+            _windows_token_path(normalized, match.start(), match.group(0).strip())
             for match in re.finditer(_FILE_TOKEN, normalized, re.IGNORECASE)
         ]
         named = [
             name
             for name in named
-            if not name.startswith(("/", "~"))
+            if name is not None
+            and not name.startswith(("/", "~"))
             and not re.match(r"^[A-Za-z]:[\\/]", name)
         ]
         if len(named) == 1:
@@ -1444,7 +1487,9 @@ def _named_read_files_beyond_cap(user_input: str) -> list[str]:
     text = _SPACED_WORKSPACE_EXTENSION_RE.sub(r"\g<stem>.\g<ext>", text)
     names: list[str] = []
     for match in re.finditer(_FILE_TOKEN, text, re.IGNORECASE):
-        candidate = match.group(0).strip()
+        candidate = _windows_token_path(text, match.start(), match.group(0).strip())
+        if candidate is None:
+            continue
         if candidate.startswith(("/", "~")) or re.match(r"^[A-Za-z]:[\\/]", candidate):
             continue
         if candidate not in names:

@@ -5,6 +5,7 @@ import contextvars
 import hashlib
 import hmac
 import json
+import os
 import re
 import secrets
 import threading
@@ -95,6 +96,9 @@ def _memory_reader(function: Any = None, *, owner_keys: bool = False, one_readin
         policy = bound.get("access_policy")
         chat_id = str(bound.get("chat_id") or bound.get("session_id") or getattr(policy, "chat_id", "") or "") or None
         result = function(*args, **kwargs)
+        if _SKIP_UNOWNED_ON and isinstance(result, list) and not result and _ONE_LISTING.get() is not None:
+            # Nothing to recheck: an empty list is served as [] whatever the authority says.
+            return result
         if owner_keys:
             selected = {sid: row for sid, row in result.items() if _authorized_reader_payload(row, chat_id=sid)}
             return selected if all(_authorized_reader_payload(row, chat_id=sid) for sid, row in selected.items()) else {}
@@ -652,12 +656,16 @@ def _memory_command_row_owned(
     access_policy: ContextAccessPolicy,
 ) -> bool:
     """A chat-scoped row is the reading chat's own; otherwise only project and profile rows."""
+    return _row_owned_by(row, access_policy.chat_id)
+
+
+def _row_owned_by(row: dict[str, Any], chat_id: str) -> bool:
     scope = str(row.get("scope") or "").strip().lower()
     if scope == "chat":
         origin_chat = str(
             row.get("origin_chat_id") or row.get("session_id") or ""
         ).strip()
-        return origin_chat == access_policy.chat_id
+        return origin_chat == chat_id
     return scope in {"project", "user_profile"}
 
 
@@ -969,6 +977,14 @@ def list_memory_entries(
         _ensure_memory_files()
         if listing is not None:
             listing.files_ready = True
+    if listing is not None and _SKIP_UNOWNED_ON and access_policy is None:
+        # A chat that owns no row lists nothing whatever its policy or forget authority say, so one
+        # listing skips reading them for it (Steve, 23 Nov: 0 of ~280 chats own a row, 5-15 s page).
+        if listing.rows is None:
+            listing.rows = _load_jsonl(memory_entries_path())
+        owner = str(chat_id or "").strip()
+        if owner and not any(_row_owned_by(row, owner) for row in listing.rows):
+            return []
     policy = resolve_memory_access_policy(
         access_policy=access_policy,
         chat_id=chat_id,
@@ -989,6 +1005,10 @@ class _Listing:
         self.files_ready = False
 
 
+# Windows only (0.7.3): one listing skips the policy and forget-authority reads of a chat that owns
+# no row. Mac and Linux read every chat's policy as Mac ships. Patched by tests.
+_SKIP_UNOWNED_ON = os.name == "nt"
+
 _ONE_LISTING: contextvars.ContextVar[_Listing | None] = contextvars.ContextVar("memory_one_listing", default=None)
 
 
@@ -1007,11 +1027,12 @@ def _one_listing():
     if _ONE_LISTING.get() is not None:
         yield
         return
+    from core.context_namespace import _schema_once
     from core.finalization import availability_read_scope
 
     token = _ONE_LISTING.set(_Listing())
     try:
-        with availability_read_scope():
+        with availability_read_scope(), _schema_once():
             yield
     finally:
         _ONE_LISTING.reset(token)
@@ -1072,6 +1093,8 @@ def _memory_entries_under(
         )
     )
     selected = selected_rows[-max(1, int(limit)) :]
+    if not selected and _SKIP_UNOWNED_ON and _ONE_LISTING.get() is not None:
+        return []
     return selected if authorize_payload(selected, chat_id=policy.chat_id) else []
 
 

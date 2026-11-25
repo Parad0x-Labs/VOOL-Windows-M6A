@@ -7,8 +7,10 @@ row, or on any EVM row. Legacy SOL on Solana Devnet from a legacy wallet and x40
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -63,6 +65,108 @@ _CHAIN_HINTS: dict[str, str] = {
 }
 
 
+#: Windows only (0.7.3): words that name an environment, not a chain or a network. A model that reads "send ... 1 USDT"
+#: on Mainnet may pass network="mainnet" and a chain guessed from it ("mainnet" mapped to Ethereum in _CHAIN_HINTS).
+_ENVIRONMENT_WORDS = frozenset({"mainnet", "testnet", "devnet"})
+#: the environment each word names (Solana Devnet is a row of the test environment)
+_WORD_ENVIRONMENT = {"mainnet": chains.ENVIRONMENT_MAINNET, "testnet": chains.ENVIRONMENT_TESTNET, "devnet": chains.ENVIRONMENT_TESTNET}
+_ENVIRONMENT_LABEL = {chains.ENVIRONMENT_MAINNET: "Mainnet", chains.ENVIRONMENT_TESTNET: "Testnet"}
+
+
+def _active_environment() -> str:
+    from core.wallet import environment
+
+    return environment.active_environment().environment
+
+
+def _windows() -> bool:
+    try:
+        from core import windows_write_gate
+
+        return windows_write_gate.active()
+    except Exception:
+        return False
+
+
+def chain_hint(chain: str) -> str:
+    """The chain key a caller's chain name stands for. On Windows an environment word ("mainnet") names no chain."""
+    key = str(chain or "").strip().lower()
+    if _windows() and key in _ENVIRONMENT_WORDS:
+        # the active environment's own word names nothing more; another environment's word matches no row here, so
+        # the request is refused rather than moved to the active environment (a test ask never becomes real money)
+        return "" if _WORD_ENVIRONMENT[key] == _active_environment() else key
+    return _CHAIN_HINTS.get(key, key)
+
+
+class ExplicitAddressHints:
+    """Windows only: the chain and network a model passed for a payment to an address given directly, made to fit the
+    address. ``refusal`` is set when the request named a chain of another kind than the address."""
+
+    __slots__ = ("chain", "network", "refusal", "status")
+
+    def __init__(self, chain: str, network: str, refusal: str = "", status: str = "") -> None:
+        self.chain, self.network, self.refusal, self.status = chain, network, refusal, status
+
+
+#: Windows (0.7.3, Chief of Staff and Security Review on be26d738): words with which a person names a chain. A chain the
+#: model passed beside "mainnet" for a contact is dropped only when the person's own message names none of these.
+_CHAIN_WORDS_RE = re.compile(
+    r"(?<![\w-])(?:solana|sol|spl|ethereum|ether|eth|erc-?20|base|bnb|bsc|binance|bep-?20|arbitrum|arb|robinhood|"
+    r"polygon|matic|optimism|avalanche|avax|tron|trc-?20|evm|ton|bitcoin|btc|zcash)(?![\w-])",
+    re.IGNORECASE,
+)
+
+
+def names_a_chain(text: str) -> bool:
+    """Whether a person's message names a chain or a chain alias ("on Ethereum", "USDT on sol", "erc20")."""
+    return bool(_CHAIN_WORDS_RE.search(str(text or "")))
+
+
+def explicit_address_hints(destination: str, *, chain: str, network: str, environment: str = "",
+                           request_text: str | None = None) -> ExplicitAddressHints:
+    """Windows only (0.7.3, Steve row 4). An environment word in the network or the chain counts as unset. For an address
+    given directly, its shape says the family (base58 is Solana, 0x is EVM): a chain of the other family is refused,
+    unless it came with an environment word for the network, where it was guessed from that word and is dropped. The
+    network left unset is then the active environment's row of that family that carries the asset (resolve_request).
+    An environment word counts as unset only when it names the active environment: one naming another environment is
+    refused, so a test request is never drafted as a real-money one (or the reverse). Off Windows the values come back
+    as given."""
+    raw_chain, raw_network = str(chain or "").strip(), str(network or "").strip()
+    if not _windows():
+        return ExplicitAddressHints(raw_chain, raw_network)
+    active = str(environment or "").strip().lower() or _active_environment()
+    for word in (raw_network.lower(), raw_chain.lower()):
+        asked = _WORD_ENVIRONMENT.get(word)
+        if asked and asked != active:
+            return ExplicitAddressHints(raw_chain, raw_network, refusal=(
+                f"VOOL is on {_ENVIRONMENT_LABEL.get(active, active)}; you asked for {word.capitalize()}. "
+                "Switch the environment in Settings, Crypto, Developer options first."), status="wallet_environment_mismatch")
+    network_was_environment = raw_network.lower() in _ENVIRONMENT_WORDS
+    out_network = "" if network_was_environment else raw_network
+    out_chain = "" if raw_chain.lower() in _ENVIRONMENT_WORDS else raw_chain
+    family = _destination_family(destination)
+    if network_was_environment and not family and request_text is not None and not names_a_chain(request_text):
+        # Composer retry on 6ca09fed (24 Nov): "send Testy 1 USDT" came with chain=ethereum, network=mainnet. For a
+        # contact name or id the chain beside an environment word is the model's guess too: dropped, so the resolver
+        # keeps the chains that carry the asset and the contact's saved wallet pins its own network. Only when the
+        # person's own message names no chain: "send Testy 1 USDT on Ethereum" keeps it, and a contact with no wallet
+        # there is refused. With no message to read (request_text None) the chain is kept too: fail closed.
+        out_chain = ""
+    key = _CHAIN_HINTS.get(out_chain.lower(), out_chain.lower())
+    if family and key:
+        kinds = {spec.family for spec in chains.all_networks() if spec.chain_key == key}
+        if kinds and family not in kinds:
+            if network_was_environment:
+                out_chain = ""
+            else:
+                shape = "a Solana address" if family == chains.FAMILY_SVM else "an EVM (0x) address"
+                named = next((spec.display_name for spec in chains.all_networks() if spec.chain_key == key), out_chain)
+                return ExplicitAddressHints(out_chain, out_network, refusal=(
+                    f"{str(destination).strip()} is {shape}, so it can't receive on {named}. Say the chain the address is on."),
+                    status="recipient_chain_mismatch")
+    return ExplicitAddressHints(out_chain, out_network)
+
+
 def destination_family(destination: str) -> str:
     """The family a recipient's shape belongs to: ``evm`` for a 20-byte hex address, ``svm`` for a base58 key, else ``""``."""
     return _destination_family(destination)
@@ -91,7 +195,7 @@ def resolve_request(*, destination: str, asset: str = "", amount: Any = None, am
     rows = list(chains.rows_for_environment(active))
     wanted_wallet = str(wallet_id or "").strip()
     explicit_network = str(network or "").strip()
-    chain_key = _CHAIN_HINTS.get(str(chain or "").strip().lower(), str(chain or "").strip().lower())
+    chain_key = chain_hint(chain)
     symbol = str(asset or "").strip().upper()
     family_hint = _destination_family(destination)
     candidates: list[dict[str, Any]] = []
@@ -429,6 +533,36 @@ def _human(minor: Any, decimals: int) -> str:
     return amounts.format_minor(int(minor), decimals) if minor is not None else ""
 
 
+def pending_approval_reply(proposal_id: str) -> str:
+    """On Windows, the chat's reply for a payment proposal that waits on its approval card: what it pays, to whom and
+    where, and that approving the card sends it; "" when the proposal is not pending approval, and always off Windows.
+
+    Steve, row 4 (0.7.3 at 8987cac7, 23 Nov 2026): the model proposed 1 USDT, then simulated the proposal; the loop
+    stopped on that preview with no text for the person and answered "I wasn't able to turn that into a completed
+    action", while the card sat waiting and the send went through once approved."""
+    if not _windows():
+        return ""
+    from core.wallet import payment_review, proposals
+
+    proposal = proposals.get_proposal(str(proposal_id or ""))
+    if proposal is None or proposal.state != proposals.STATE_PENDING_APPROVAL:
+        return ""
+    symbol = str(proposal.asset or "").upper()
+    try:
+        spec = chains.resolve_network(proposal.network)
+        place = spec.display_name
+        token = next((t for t in chains.user_transfer_tokens(proposal.network) if str(t.symbol).upper() == symbol), None)
+        decimals = int((token or chains.native_asset(proposal.network)).decimals)
+        amount = f"{_human(proposal.amount_minor, decimals)} {symbol}"
+    except Exception:  # an unreadable row still gets the approval sentence, in the wallet's own units
+        place, amount = str(proposal.network), f"{proposal.amount_minor} {symbol} (minor units)"
+    return (
+        f"The payment is waiting for your approval: {amount} to {payment_review.short_address(proposal.destination)} on "
+        f"{place}. Approve the card with your PIN, biometric or external wallet to send it. "
+        "Nothing has been signed or sent yet."
+    )
+
+
 def view_of(row: dict[str, Any]) -> dict[str, Any]:
     from core.wallet import environment
 
@@ -525,7 +659,85 @@ def view_of(row: dict[str, Any]) -> dict[str, Any]:
 
 def latest_receipt(proposal_id: str) -> dict[str, Any] | None:
     row = get_transfer_by_id(proposal_id)
-    return view_of(row) if row else None
+    if row:
+        return view_of(row)
+    refused = _unclaimed_receipt_views(proposal_id=str(proposal_id), limit=1)
+    return refused[0] if refused else None
+
+
+def _unclaimed_receipt_candidates(clauses: list[str], values: list[Any]) -> Iterator[dict[str, Any]]:
+    """Read bounded pages in display creation order; eligibility precedes its limit."""
+    after = None
+    while True:
+        page_clauses, page_values = clauses, values
+        if after is not None:
+            page_clauses = [*clauses, "(p.created_at < ? OR (p.created_at = ? AND r.rowid < ?))"]
+            page_values = [*values, after[0], after[0], after[1]]
+        with connection() as conn:
+            cursor = conn.execute(
+                "SELECT p.*, w.public_key AS from_address, r.receipt_id, r.rowid AS receipt_rowid, "
+                "r.payload_json AS refusal_payload, r.created_at AS receipt_created_at FROM wallet_proposals p "
+                "JOIN wallet_receipts r ON r.proposal_id = p.proposal_id "
+                "LEFT JOIN wallet_profiles w ON w.wallet_id = p.wallet_id WHERE " + " AND ".join(page_clauses)
+                + " ORDER BY p.created_at DESC, r.rowid DESC LIMIT 200", page_values)
+            rows = [{d[0]: row[i] for i, d in enumerate(cursor.description)} for row in cursor.fetchall()]
+        yield from rows
+        if len(rows) < 200:
+            return
+        after = rows[-1]["created_at"], rows[-1]["receipt_rowid"]
+
+
+def _unclaimed_receipt_views(*, limit: int, wallet_id: str = "", network: str = "", proposal_id: str = "") -> list[dict[str, Any]]:
+    """Activity for a durable refusal before any claim. No second state or ledger is written.
+
+    A receipt alone cannot prove non-dispatch: require a terminal unsigned proposal,
+    the producer's zero-charge refusal record, and no transfer, spend or signing claim.
+    An unknown or inconsistent record never acquires a 'not sent' presentation.
+    """
+    from core.i18n.turn_locale import turn_text
+    from core.wallet import proposals
+
+    clauses = ["p.state IN (?, ?, ?)", "p.tx_signature = ''", "r.state = p.state", "r.tx_signature = ''",
+        "NOT EXISTS (SELECT 1 FROM wallet_transfers t WHERE t.proposal_id = p.proposal_id)",
+        "NOT EXISTS (SELECT 1 FROM wallet_spend_ledger s WHERE s.proposal_id = p.proposal_id)",
+        "NOT EXISTS (SELECT 1 FROM wallet_signing_requests s WHERE s.proposal_id = p.proposal_id)",
+        "r.rowid = (SELECT MAX(r2.rowid) FROM wallet_receipts r2 WHERE r2.proposal_id = p.proposal_id)"]
+    values: list[Any] = [proposals.STATE_REJECTED, proposals.STATE_FAILED, proposals.STATE_EXPIRED]
+    for column, value in (("wallet_id", wallet_id), ("proposal_id", proposal_id)):
+        if value:
+            clauses.append(f"p.{column} = ?")
+            values.append(str(value))
+    if network:
+        spec = chains.resolve_network(network)
+        names = (spec.network, *spec.legacy_names)
+        clauses.append(f"p.network IN ({','.join('?' for _ in names)})")
+        values.extend(names)
+    requested = max(1, min(int(limit), 200))
+    views = []
+    for row in _unclaimed_receipt_candidates(clauses, values):
+        try:
+            refusal = json.loads(row["refusal_payload"]).get("refusal")
+        except (ValueError, AttributeError):
+            continue
+        if (not isinstance(refusal, dict) or any(type(refusal.get(k)) is not int or refusal[k] != 0
+                for k in ("charged_amount_minor", "charged_fee_minor"))):
+            continue
+        if not is_pilot_transfer_parts(wallet_id=row["wallet_id"], network=row["network"], asset=row["asset"]):
+            continue
+        cancelled = refusal.get("reason") == "owner_rejected"
+        view = view_of({**row, "to_address": row["destination"], "fee_max_minor": 0,
+            "state": STATE_CANCELLED if cancelled else STATE_RELEASED, "fee_state": FEE_EXACT,
+            "charged_fee_minor": 0, "evidence_kind": "refused_before_claim", "updated_at": row["receipt_created_at"]})
+        # This is a proposal receipt, never a transfer-state transition. Preserve
+        # the authoritative proposal state beside its user-facing cancellation.
+        view.update(record_kind="proposal_receipt", receipt_id=row["receipt_id"], proposal_state=row["state"],
+            state=STATE_CANCELLED if cancelled else row["state"], terminal=True,
+            state_label=turn_text("wallet.receipt.cancelled", "Cancelled") if cancelled else turn_text("wallet.receipt.not_sent", "Not sent"),
+            detail=turn_text("wallet.receipt.not_sent_detail", "Nothing was signed or sent."))
+        views.append(view)
+        if len(views) == requested:
+            break
+    return views
 
 
 def list_transfers(*, limit: int = 50, wallet_id: str = "", network: str = "") -> list[dict[str, Any]]:
@@ -540,7 +752,9 @@ def list_transfers(*, limit: int = 50, wallet_id: str = "", network: str = "") -
     with connection() as conn:
         cursor = conn.execute(f"SELECT * FROM wallet_transfers{where} ORDER BY created_at DESC LIMIT ?", (*values, max(1, min(int(limit), 200))))
         rows = [{d[0]: r[i] for i, d in enumerate(cursor.description)} for r in cursor.fetchall()]
-    return [view_of(row) for row in rows]
+    views = [view_of(row) for row in rows]
+    views.extend(_unclaimed_receipt_views(limit=limit, wallet_id=wallet_id, network=network))
+    return sorted(views, key=lambda view: str(view["created_at"]), reverse=True)[:max(1, min(int(limit), 200))]
 
 
 def in_flight() -> list[dict[str, Any]]:

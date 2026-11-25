@@ -63,14 +63,20 @@ CONTACTS_WORDS: tuple[tuple[str, str, int], ...] = (
 #: (Mac text, Windows text) for the shortcut key caps, as the chat page's palette and companion drawer fragments carry
 #: them: every shortcut already answers Ctrl, and on Windows its key cap says so.
 SHORTCUT_WORDS: tuple[tuple[str, str], ...] = (
+    # 0.7.3: a Windows page serves IS_MAC = false, so every key-cap decision follows the Windows keyboard
+    ("var IS_MAC = /Mac|iPhone|iPad/.test((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '');",
+     "var IS_MAC = false;"),
     ("var MOD = IS_MAC ? '\u2318' : 'Ctrl+';", "var MOD = 'Ctrl+';"),   # 0.7.2: the palette rows' key caps
     ("p.newChat(); }, '\\⌘N');", "p.newChat(); }, 'Ctrl+N');"),
     ("p.togglePanel(); }, '\\⌘J');", "p.togglePanel(); }, 'Ctrl+J');"),
     ("p.openModelMenu(); }, '\\⌘M');", "p.openModelMenu(); }, 'Ctrl+M');"),
     ("p.openSettings(); }, '\\⌘,');", "p.openSettings(); }, 'Ctrl+,');"),
-    *((f"<kbd>⌘{key}</kbd>", f"<kbd>Ctrl+{key}</kbd>") for key in "KJ/F,"),
+    # 0.7.3: the palette builds its caps in the browser (vpCombo / vpKbdLabel); Windows is served the Ctrl caps
+    ("function vpCombo(key){ return (VP_APPLE ? '⌘' : 'Ctrl+') + key; }", "function vpCombo(key){ return 'Ctrl+' + key; }"),
+    ("  return kbd.charAt(0) === '⌘' ? vpCombo(kbd.slice(1)) : kbd;", "  return kbd;"),
+    *((f"<kbd>' + vpCombo('{key}') + '</kbd>", f"<kbd>Ctrl+{key}</kbd>") for key in "KJ/F,"),
     # 0.7.2: the Mac page itself carries '<kbd>Ctrl+N</kbd>' (its own off-Mac hint filter), so only the drawn cap
-    ("<kbd>⌘N</kbd> ' + vpHintT(", "<kbd>Ctrl+N</kbd> ' + vpHintT("),
+    ("<kbd>' + vpCombo('N') + '</kbd> ' + vpHintT(", "<kbd>Ctrl+N</kbd> ' + vpHintT("),
     ("chip.textContent = '\\u2318N';", "chip.textContent = 'Ctrl+N';"),
     ("toggleDrawer, '\\u2318/');", "toggleDrawer, 'Ctrl+/');"),
 )

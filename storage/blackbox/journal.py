@@ -291,6 +291,18 @@ class Journal:
 
     # -- verification -------------------------------------------------------------------------
     def verify(self) -> ChainReport:
+        # Windows: verify reads the journal and then HEAD; an append that lands between the two
+        # reads (Windows file opens are slow enough to make that common) leaves HEAD one entry
+        # ahead of the lines read and the chain reads as "tail_truncated" though nothing is wrong.
+        # Under the journal lock no append can land in between. Other hosts read as Mac ships it.
+        from core import windows_write_gate
+
+        if windows_write_gate.active():
+            with self.exclusive():
+                return self._verify_unlocked()
+        return self._verify_unlocked()
+
+    def _verify_unlocked(self) -> ChainReport:
         key = self.key()
         lines = self._raw_lines()
         prev = GENESIS_PREV

@@ -65,6 +65,11 @@ _STALE_API_CLEANUP_TIMEOUT_SECONDS = 30.0
 # A relaunch that arrives while the window is still closing (the user clicked X, then the
 # shortcut) still reopens it if that window exits within this many seconds.
 _REOPEN_GRACE_SECONDS = 10.0
+# A reopen request that finds the window host running but never showing its window (Steve, 0.7.2, at
+# 3 to 5 GB free RAM: the host alive with only a hidden 300x300 form) starts the host again, once
+# the host has had this much awake time since its start to show the window. The host says it showed
+# the window by writing its pid to the file named in VOOL_WINDOW_SHOWN_PATH (vool_window.py).
+_HIDDEN_WINDOW_GRACE_SECONDS = 30.0
 # A window reopened after its runtime was lost whose host exits 1 within this much awake time of its
 # start never attached: the host checks the API once as it starts, and exits 1 at once without
 # showing a window when that check misses. Its life is measured up to the first measured instant
@@ -363,6 +368,7 @@ class BundleSupervisor:
         self.lock_path = self.run_dir / "bundle-supervisor.lock"
         self.stop_path = self.run_dir / "stop"
         self.window_reopen_path = self.run_dir / "window-reopen"
+        self.window_shown_path = self.run_dir / "window-shown"
         self.model_status_path = self.run_dir / "model-pull.json"
         self.processes: dict[str, subprocess.Popen[Any]] = {}
         self.handles: dict[str, Any] = {}
@@ -387,6 +393,8 @@ class BundleSupervisor:
         self._lock_handle: Any | None = None
         self.window_started = False
         self.window_reopen_until = 0.0
+        # A reopen request came while the window host ran: check that it showed its window.
+        self._window_shown_check = False
         # Set by a window's exit 3 and cleared by any exit but 1: the window opening or open now is
         # one this supervisor reopened after its runtime was lost.
         self._window_lost_runtime = False
@@ -702,6 +710,15 @@ class BundleSupervisor:
         self.processes[name] = child
         self.handles[name] = handle
         self.started_at[name] = self._last_measured()
+        # Every start is written in the child's own log, so a start that writes nothing itself (a
+        # window host that never shows its window) still leaves a line there.
+        # Windows only (0.7.3 carry 15); Mac and Linux log as Mac ships.
+        if _is_windows_platform():
+            with contextlib.suppress(OSError, ValueError):
+                stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+                handle.write(f"{stamp} bundle supervisor started {name} pid={child.pid}\n".encode())
+                handle.flush()
+            self._log(f"{name} started pid={child.pid}")
         self.exit_seen_at.pop(name, None)
         self._forget_answers(name)
         self.next_attempt[name] = now
@@ -1041,7 +1058,15 @@ class BundleSupervisor:
         # attaches to serves exactly this bundle's stamped commit and runtime profile, and -- when
         # this supervisor started the API -- that it is that exact process, which then vouches for
         # it through slow first-run health answers the way an owned child would.
-        window_env = {"VOOL_NATIVE_REQUIRE_OWNED_RUNTIME": "0", "VOOL_EXPECTED_COMMIT": self._bundle_commit()}
+        window_env = {
+            "VOOL_NATIVE_REQUIRE_OWNED_RUNTIME": "0",
+            "VOOL_EXPECTED_COMMIT": self._bundle_commit(),
+        }
+        if _is_windows_platform():   # the shown mark is read only on Windows (carry 15)
+            window_env["VOOL_WINDOW_SHOWN_PATH"] = str(self.window_shown_path)
+            with contextlib.suppress(OSError):
+                self.window_shown_path.unlink()
+        self._window_shown_check = False
         api = self.processes.get("api")
         if api is not None and api.poll() is None:
             window_env["VOOL_NATIVE_VOUCHING_PID"] = str(api.pid)
@@ -1137,9 +1162,45 @@ class BundleSupervisor:
         else:
             self._log("window reopen requested")
             self.window_reopen_until = now + _REOPEN_GRACE_SECONDS
+            if "window" in self.processes:
+                self._window_shown_check = True
         if "window" not in self.processes and now < self.window_reopen_until:
             self.window_started = False
             self.window_reopen_until = 0.0
+
+    def _window_was_shown(self, pid: int) -> bool:
+        try:
+            return self.window_shown_path.read_text(encoding="utf-8").strip() == str(pid)
+        except OSError:
+            return False
+
+    def _recreate_hidden_window(self) -> None:
+        """After a reopen request, a window host that is running but never showed its window is
+        started again. It is given _HIDDEN_WINDOW_GRACE_SECONDS of awake time from its start first,
+        because a slow first start is not a hidden window. A host that showed its window (and may
+        be minimized or behind others) is left as it is; the second launch brings it forward."""
+        if not self._window_shown_check or not _is_windows_platform():
+            return
+        child = self.processes.get("window")
+        if child is None or child.poll() is not None:
+            self._window_shown_check = False   # _reap_window and _consume_window_reopen handle it
+            return
+        if self._window_was_shown(child.pid):
+            self._window_shown_check = False
+            return
+        started = self.started_at.get("window")
+        lived = 0.0 if started is None else self._last_measured() - started
+        if lived < _HIDDEN_WINDOW_GRACE_SECONDS:
+            return   # checked again on a later pass
+        self._window_shown_check = False
+        self._log(
+            f"window host pid={child.pid} never showed its window ({lived:.0f}s since its start); "
+            "starting it again"
+        )
+        self._stop_child("window")
+        self.window_started = False
+        self._window_lost_runtime = False
+        self.failures["window"] = 0
 
     def _write_state(self) -> None:
         wall, tick = time.time(), _tick()
@@ -1205,6 +1266,7 @@ class BundleSupervisor:
                 self._ensure_api()
                 self._reap_window()
                 self._consume_window_reopen()
+                self._recreate_hidden_window()
                 self._consume_update_worker_request()
                 self._ensure_window()
                 self._write_state()

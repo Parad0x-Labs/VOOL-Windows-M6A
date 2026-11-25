@@ -176,6 +176,8 @@ def _live_data_classification_cached(text: str) -> tuple[bool, bool, tuple[str, 
     has_water = bool(requests_a_water_temperature(lowered))
     if constraints.forbids("market_prices"):
         has_price = False
+    if has_price and _market_collect_asked_without_a_price(candidate_text):
+        has_price = False
     if constraints.forbids("weather"):
         has_weather = False
         has_water = False
@@ -202,6 +204,47 @@ def _live_data_classification_cached(text: str) -> tuple[bool, bool, tuple[str, 
     # implies parallel-preferred, with no separate dependency analysis needed.
     multipart = (has_price and has_weather) or turn_may_hold_several_requests(candidate_text)
     return multipart, multipart, tuple(toolsets)
+
+
+#: The words a trade-collection ask is made of. `core.market_intent` counts "trades"/"trading" as
+#: market semantics, which is right for "how is $BONK trading", but in a collect ask they name what to
+#: collect, not a price to quote.
+_COLLECT_VOCABULARY = (
+    r"\b(?:trades?|trading|traded|swaps?|candles?|market\s+data)\b"
+)
+
+
+def _market_collect_asked_without_a_price(text: str) -> bool:
+    """Windows: the text demands ``market.collect`` and asks no price beside it.
+
+    "collect the last 7 days of trades for $BONK on Solana" seats market.collect
+    (core.tool_demand_signals), but the `$BONK` notation and the word "trades" also admitted it to
+    LIVE_DATA, and with a real model route the live-data lane answered a CoinGecko quote instead of
+    collecting (Steve r072-4, 14 Nov). The lane stands down for such a turn, so it reaches the tool
+    loop that offers market.collect. A price asked beside the collect ask ("price of $BONK and
+    collect its trades") keeps its market word once the collect vocabulary is set aside, and
+    classifies as before; so does every turn that does not seat market.collect.
+    """
+    try:
+        from core import windows_write_gate
+
+        if not windows_write_gate.active():
+            return False
+        from core.tool_demand_signals import resolve_demand_signals
+
+        intents = resolve_demand_signals(str(text or "")).explicit_intents
+        # A buy/sell question ("is $BONK being bought or sold") seats token.flow beside market.collect;
+        # it keeps its route, so the change stays with the collect ask.
+        if "market.collect" not in intents or "token.flow" in intents:
+            return False
+        import re
+
+        from core.market_intent import market_semantics_present
+
+        rest = re.sub(_COLLECT_VOCABULARY, " ", str(text or ""), flags=re.I)
+        return not market_semantics_present(rest)
+    except Exception:
+        return False
 
 
 def _wallet_action_demand(text: str) -> bool:
@@ -946,6 +989,27 @@ def _compute_requirements(
             user_material_supplied=supplied,
             tools_required=True,
             allowed_toolsets=("x",),
+            inference_allowed=not no_guessing,
+            reason_codes=tuple(reasons),
+        )
+
+    # Windows: a trade-collection demand ("collect the last 7 days of trades for $BONK on Solana") is
+    # served only by the market.collect tool. Without this arm the turn, once the live-data lane stands
+    # down for it (`_market_collect_asked_without_a_price`), classified as plain conversation and the
+    # tools-less chat lane kept it. The offer reads the same demand signal, so market.collect is seated.
+    if (
+        _market_collect_asked_without_a_price(candidate_text)
+        and not constraints.forbids_all_tools
+        and not constraints.forbids_external_retrieval
+    ):
+        reasons.append("market_collect_request")
+        return ExecutionRequirements(
+            answer_mode="DIRECT",
+            external_evidence_required=False,
+            current_information_required=False,
+            user_material_supplied=supplied,
+            tools_required=True,
+            allowed_toolsets=("web_fetch",),
             inference_allowed=not no_guessing,
             reason_codes=tuple(reasons),
         )

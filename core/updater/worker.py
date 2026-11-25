@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -173,6 +175,82 @@ def start_worker(subsystem, offer, txid: str, *, recovery: bool = False, rollbac
 
 
 WINDOWS_WORKER_APP_ENV = "VOOL_UPDATE_WORKER_APP"
+WINDOWS_WORKER_PLAN_SHA256_ENV = "VOOL_UPDATE_WORKER_PLAN_SHA256"
+#: One file in the transaction's job folder that exactly one side creates (O_CREAT|O_EXCL): the bundle
+#: supervisor just before it starts the worker ("started"), or the API when it stops waiting for the
+#: supervisor ("abandoned"). Whoever creates it decides, so the API never reports "nothing was
+#: installed" while a worker it gave up on installs. An exclusive create does not follow a link.
+START_CLAIM_NAME = "start-claim.json"
+CLAIM_STARTED = "started"
+CLAIM_ABANDONED = "abandoned"
+_REPARSE_POINT = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT
+
+
+def _windows_worker(env=None) -> bool:
+    """True for the supervisor-started Windows worker, or any process on Windows."""
+    environ = os.environ if env is None else env
+    return bool(environ.get(WINDOWS_WORKER_APP_ENV)) or _is_windows()
+
+
+def claim_transaction(job: Path, outcome: str, txid: str) -> bool:
+    """Create this transaction's start claim for `outcome`. True when this side made it, False when the
+    other side already had. Raises OSError when it can be neither made nor found."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(Path(job) / START_CLAIM_NAME, flags, 0o600)
+    except FileExistsError:
+        return False
+    try:
+        os.write(descriptor, json.dumps({"txid": txid, "outcome": outcome, "at": time.time()}).encode("utf-8"))
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    return True
+
+
+def transaction_abandoned(job: Path) -> bool:
+    """The supervisor's check before it copies the interpreter: True when the claim says anything but
+    "started" or cannot be read (a link, a folder, a partial or foreign file: fail closed). No claim yet
+    is False: the supervisor makes it after the copy. The worker itself uses `supervisor_started`."""
+    path = Path(job) / START_CLAIM_NAME
+    try:
+        info = os.lstat(path)
+        if not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & _REPARSE_POINT:
+            return True
+        claim = json.loads(path.read_bytes().decode("utf-8"))
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError):
+        return True
+    return not (isinstance(claim, dict) and claim.get("outcome") == CLAIM_STARTED)
+
+
+def supervisor_started(job: Path, txid: str) -> bool:
+    """The worker's own check on Windows: True only for a regular claim file that says "started" for
+    this transaction. Every start on Windows goes through the supervisor, which makes the claim before it
+    starts the worker, so a missing claim, a claim for another transaction or one that cannot be read
+    means this worker was not started by that flow (fail closed)."""
+    path = Path(job) / START_CLAIM_NAME
+    try:
+        info = os.lstat(path)
+        if not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & _REPARSE_POINT:
+            return False
+        claim = json.loads(path.read_bytes().decode("utf-8"))
+    except (OSError, ValueError):
+        return False
+    return (isinstance(claim, dict) and bool(txid) and claim.get("outcome") == CLAIM_STARTED
+            and claim.get("txid") == txid)
+
+
+def check_plan_digest(raw: bytes, *, env=None) -> None:
+    """On Windows the plan must be byte for byte the one the supervisor validated."""
+    if not _windows_worker(env):
+        return
+    environ = os.environ if env is None else env
+    expected = str(environ.get(WINDOWS_WORKER_PLAN_SHA256_ENV) or "")
+    actual = hashlib.sha256(raw).hexdigest()
+    if len(expected) != 64 or not hmac.compare_digest(expected.lower().encode("utf-8"), actual.encode("ascii")):
+        raise ValueError("the update plan is not the one the VOOL supervisor validated; nothing was installed")
 
 
 class SupervisorStartedWorker:
@@ -216,7 +294,25 @@ def request_supervisor_start(updater_root: Path, txid: str, plan: Path, *, clock
                 and Path(str(lease.get("plan") or "")).resolve() == plan.resolve() and int(lease.get("pid") or 0) > 1):
             return SupervisorStartedWorker(int(lease["pid"]))
         sleeper(0.05)
+    # Withdraw the request, then claim the abandon. The supervisor claims "started" before it starts
+    # the worker, so exactly one of the two wins, even when it took the request and is copying the
+    # interpreter right now.
     request.unlink(missing_ok=True)
+    try:
+        abandoned = claim_transaction(plan.parent, CLAIM_ABANDONED, txid)
+    except OSError as exc:
+        raise RuntimeError("the VOOL supervisor did not start the updater in time and the abandon "
+                           f"could not be recorded ({exc}); check the update status before retrying") from exc
+    if not abandoned:
+        # The supervisor won: the worker is starting. Wait for its lease rather than say nothing ran.
+        grace = clock() + 30.0
+        while clock() < grace:
+            lease = _read_json(updater_root / "worker.json") or {}
+            if lease.get("txid") == txid and lease.get("launcher") == "supervisor" and int(lease.get("pid") or 0) > 1:
+                return SupervisorStartedWorker(int(lease["pid"]))
+            sleeper(0.05)
+        raise RuntimeError("the VOOL supervisor started the updater after the wait but published no lease; "
+                           "check the update status before retrying")
     raise RuntimeError("the VOOL supervisor did not start the updater in time; nothing was installed")
 
 
@@ -265,7 +361,9 @@ def main() -> int:
         return 0
 
     plan = Path(sys.argv[1])
-    params = json.loads(plan.read_text(encoding="utf-8"))
+    raw_plan = plan.read_bytes()
+    check_plan_digest(raw_plan)
+    params = json.loads(raw_plan.decode("utf-8"))
     trust = plan_trust(params)
     subsystem = UpdateSubsystem(feed=FeedConfig(**params["feed"]),
                                 trust=trust,
@@ -291,6 +389,8 @@ def main() -> int:
             time.sleep(.02)
         else:
             raise ValueError("the parent did not publish the detached transaction lease; nothing was installed")
+        if _windows_worker() and not supervisor_started(plan.parent, params["txid"]):
+            raise ValueError("the app stopped waiting for this update before it began; nothing was installed")
         if params.get('rollback') or params.get('rollback_recovery'):
             from core.updater.rollback import recover_manual_rollbacks, run_manual_rollback
 

@@ -1,0 +1,7 @@
+# dulwich for the Windows bundle's embedded Python: the Skill Codex signer's git steps where VOOL runs
+# no git program (owner decision D18, registry_service/dulwich_git.py). build_bundle.ps1 installs this
+# file with --require-hashes --no-deps --only-binary=:all:. The version is pyproject.toml's exact pin and
+# the sha256 is the py3-none-any wheel uv.lock pins (uploaded 2026-10-26). Its runtime dependency,
+# urllib3>=2.2.2, is already in the bundle through requests; typing_extensions is needed below 3.12 only.
+dulwich==1.2.20 \
+    --hash=sha256:ab521391c3475e7c507f14aeacad0cdf26e97ba5050d8010a1ff34e417c9a842

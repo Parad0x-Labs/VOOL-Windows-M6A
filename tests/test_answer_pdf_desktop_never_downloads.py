@@ -26,9 +26,12 @@ function node(tag) {
     click() { clicks.push(this._download || ''); },
   };
 }
-globalThis.document = { createElement: node, body: { appendChild() {} } };
+globalThis.document = { createElement: node, body: { appendChild() {} }, documentElement: { lang: '' } };
 globalThis.URL = { createObjectURL() { return 'blob:x'; }, revokeObjectURL() {} };
-globalThis.fetch = async () => ({ ok: true, blob: async () => ({ type: 'application/pdf' }) });
+globalThis.fetch = async () => ({
+  ok: true, blob: async () => ({ type: 'application/pdf' }),
+  headers: { get(name) { return String(name).toLowerCase() === 'content-disposition' ? 'attachment; filename="vool-answer.pdf"' : null; } },
+});
 globalThis.setTimeout = () => 0;
 async function run(pywebview) {
   clicks.length = 0;

@@ -520,7 +520,7 @@ class HiveTopicFacadeMixin:
         effective_input: str,
         session_id: str,
     ) -> str:
-        safe = str(getattr(execution, "user_safe_response_text", "") or "").strip()
+        safe = str(getattr(execution, "user_safe_response_text", "") or "").strip() or _pending_payment_reply(execution)
         if safe:
             base = safe
         else:
@@ -577,3 +577,24 @@ class HiveTopicFacadeMixin:
         normalized = re.sub(r"\[[^\]]+\]", " ", str(text or "").lower())
         normalized = re.sub(r"#([0-9a-f]{8,12})\b", " ", normalized)
         return " ".join(normalized.split()).strip()
+
+
+def _pending_payment_reply(execution: Any) -> str:
+    """On Windows, for a wallet preview (a proposal or its simulation) whose payment waits on its approval card, the
+    sentence that says so (core/wallet/transfers.py pending_approval_reply); "" otherwise and off Windows, so the
+    generic line below stays as Mac ships it."""
+    if str(getattr(execution, "mode", "") or "") != "tool_preview":
+        return ""
+    details = dict(getattr(execution, "details", None) or {})
+    observation = dict(details.get("observation") or {})
+    if str(observation.get("tool_surface") or "") != "wallet":
+        return ""
+    proposal_id = str(observation.get("proposal_id") or (details.get("proposal") or {}).get("proposal_id") or "").strip()
+    if not proposal_id:
+        return ""
+    try:
+        from core.wallet import transfers
+
+        return transfers.pending_approval_reply(proposal_id)
+    except Exception:  # an unreadable wallet keeps the generic line
+        return ""

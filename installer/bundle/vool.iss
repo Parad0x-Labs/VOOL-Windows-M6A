@@ -147,19 +147,26 @@ begin
   Sleep(1500);
 end;
 
+{ The one name install and uninstall call to stop VOOL before touching files (the Mac build's name);
+  the Windows stop itself is StopNulla above. }
+procedure StopVoolProcesses();
+begin
+  StopNulla();
+end;
+
 { Setup sets the app constant only once the destination folder is known: expanding it from
   InitializeSetup aborts Setup before anything is installed (exit code 1). PrepareToInstall runs
   after the destination is chosen and before any file is touched, so the install-time stop runs
   there. In the uninstaller the app constant is the installed folder from the start. }
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
-  StopNulla();
+  StopVoolProcesses();
   Result := '';
 end;
 
 function InitializeUninstall(): Boolean;
 begin
-  StopNulla();
+  StopVoolProcesses();
   Result := True;
 end;
 

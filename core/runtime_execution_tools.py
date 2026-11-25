@@ -12,13 +12,15 @@ import platform
 import re
 import shlex
 import subprocess
+import threading
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from core import policy_engine, windows_known_folders, windows_path_policy
 from core.effect_reconciliation import (
@@ -2723,6 +2725,193 @@ def _wallet_balances(source_context: dict[str, Any] | None) -> dict[str, Any]:
     return {"lines": lines, "balances": public, "read": len(held) + len(empty), "unavailable": len(unknown)}
 
 
+#: Windows: the addresses a "which one?" answer offered, per turn, so the model can't answer that question itself.
+#: Steve row 38 (0.7.3 at 8987cac7, 23 Nov 2026): two saved contacts matched "Testy"; wallet.propose asked which one
+#: twice, then the model called it again with one contact's raw address and chain=solana, and a proposal was drafted
+#: for a recipient nobody chose. The person's answer comes on a later turn, which this never blocks.
+_RECIPIENT_QUESTIONS: dict[str, tuple[float, dict[str, str]]] = {}
+_RECIPIENT_QUESTION_TTL_SECONDS = 600.0
+_RECIPIENT_QUESTIONS_LOCK = threading.Lock()
+_NAME_PART_RE = re.compile(r"\s*\(")
+
+
+def _recipient_question_key(context: dict[str, Any] | None) -> str:
+    from core import windows_write_gate
+    from core.faults.recorder import identity_from_context
+
+    if not windows_write_gate.active():
+        return ""
+    try:
+        turn, session = identity_from_context(context)
+    except Exception:
+        return ""
+    return f"{session}\x1f{turn}" if turn else ""
+
+
+def _recipient_value(value: Any) -> str:
+    text = str(value or "").strip()
+    return text.lower() if text.lower().startswith("0x") else text
+
+
+def _remember_recipient_question(resolution: dict[str, Any], message: str, context: dict[str, Any] | None) -> None:
+    key = _recipient_question_key(context)
+    if not key:
+        return
+    values: set[str] = set()
+    for choice in resolution.get("choices") or ():
+        for endpoint in [choice, *(choice.get("endpoints") or ())]:
+            if not isinstance(endpoint, dict):
+                continue
+            # every form the resolver takes for one of them: the address, the ct-/ep- ids, and the contact's name
+            # (alone or as "Name (label)", compared case-folded)
+            for key_name in ("value", "choose_with", "contact_id", "endpoint_id"):
+                if _recipient_value(endpoint.get(key_name)):
+                    values.add(_recipient_value(endpoint.get(key_name)))
+            # the ids exactly as stored, for the check on what a destination resolved to
+            for key_name in ("contact_id", "endpoint_id"):
+                raw = str(endpoint.get(key_name) or "").strip()
+                if raw:
+                    values.add(f"id:{raw}")
+            name = str(endpoint.get("display_name") or "").strip().casefold()
+            if name:
+                values.add(f"name:{name}")
+    if not values:
+        return
+    now = time.monotonic()
+    with _RECIPIENT_QUESTIONS_LOCK:
+        for stale in [k for k, (until, _held) in _RECIPIENT_QUESTIONS.items() if until <= now]:
+            del _RECIPIENT_QUESTIONS[stale]
+        # a second question in the same turn adds to the first one's set; each value keeps the first question that offered it
+        _until, held = _RECIPIENT_QUESTIONS.get(key, (0.0, {}))
+        merged = dict(held)
+        for value in values:
+            merged.setdefault(value, message)
+        _RECIPIENT_QUESTIONS[key] = (now + _RECIPIENT_QUESTION_TTL_SECONDS, merged)
+
+
+def _held_recipient_question(tokens: set[str], context: dict[str, Any] | None) -> str:
+    key = _recipient_question_key(context)
+    if not key:
+        return ""
+    with _RECIPIENT_QUESTIONS_LOCK:
+        entry = _RECIPIENT_QUESTIONS.get(key)
+    if entry is None or entry[0] <= time.monotonic():
+        return ""
+    for token in sorted(tokens):
+        if token and token in entry[1]:
+            return entry[1][token]
+    return ""
+
+
+def _asked_recipient_question(destination: str, context: dict[str, Any] | None) -> str:
+    """On Windows, the question this turn already asked when `destination` is one of the recipients it offered; "" otherwise."""
+    text = str(destination or "").strip()
+    named = _NAME_PART_RE.split(text.casefold(), maxsplit=1)[0].strip()
+    return _held_recipient_question({_recipient_value(text), f"name:{named}" if named else ""}, context)
+
+
+def _asked_about_resolved_recipient(snapshot: dict[str, Any], context: dict[str, Any] | None) -> str:
+    """On Windows, the question this turn already asked when the destination RESOLVED to one of the recipients it
+    offered, by any spelling the resolver takes (an alias, a lookalike name, "Name(label)"); "" otherwise."""
+    if not isinstance(snapshot, dict):
+        return ""
+    tokens: set[str] = set()
+    if snapshot.get("resolution") == "contact":
+        for key_name in ("contact_id", "endpoint_id"):
+            raw = str(snapshot.get(key_name) or "").strip()
+            if raw:
+                tokens.add(f"id:{raw}")
+    if snapshot.get("resolution") in ("contact", "explicit"):
+        tokens.add(_recipient_value(snapshot.get("value")))
+    return _held_recipient_question(tokens, context)
+
+
+#: Windows (0.7.3, Steve row 38 on 9e1eb4b4): the person's answer to a wallet "which one?", per chat. "send Testy 1 USDT"
+#: with two saved contacts (Testy, Testy R072) asked which one; the person answered "Testy R072" and the model replied in
+#: prose with no tool call, so a send to a contact whose name clashes could never finish. The question that ended a turn
+#: keeps the request (asset, amount, chain, network) and the offered recipients for the chat's NEXT message, which
+#: core.agent_runtime.fast_paths_contact_pick reads: a message naming exactly one of them proposes it (approval card,
+#: nothing signed); anything else is handled as before. Used once, cleared by a later proposal, gone after the TTL.
+_PENDING_RECIPIENT_CHOICES: dict[str, tuple[float, str, dict[str, Any], tuple[dict[str, str], ...]]] = {}
+_PENDING_CHOICE_ARGUMENTS = ("asset", "amount", "amount_minor", "chain", "network", "wallet_id", "memo")
+
+
+def _chat_and_turn(context: dict[str, Any] | None) -> tuple[str, str]:
+    from core import windows_write_gate
+    from core.faults.recorder import identity_from_context
+
+    if not windows_write_gate.active():
+        return "", ""
+    try:
+        turn, session = identity_from_context(context)
+    except Exception:
+        return "", ""
+    return str(session or ""), str(turn or "")
+
+
+def _remember_pending_recipient_choice(resolution: dict[str, Any], args: dict[str, Any], context: dict[str, Any] | None) -> None:
+    session, turn = _chat_and_turn(context)
+    if not session or not turn:
+        return
+    candidates: list[dict[str, str]] = []
+    for choice in resolution.get("choices") or ():
+        if not isinstance(choice, dict):
+            continue
+        contact_id = str(choice.get("contact_id") or "").strip()
+        name = str(choice.get("display_name") or "").strip()
+        if not contact_id or not name:
+            continue
+        # each address with the endpoint it belongs to, so a pick by address names that one endpoint
+        addresses: dict[str, str] = {}
+        for endpoint in [choice, *(choice.get("endpoints") or ())]:
+            value = str(endpoint.get("value") or "").strip() if isinstance(endpoint, dict) else ""
+            if value:
+                endpoint_id = str(endpoint.get("endpoint_id") or "").strip()
+                addresses[value] = addresses.get(value) or (endpoint_id if endpoint_id.startswith("ep-") else "")
+        candidates.append({"contact_id": contact_id, "display_name": name, "values": "\x1f".join(addresses),
+                           "endpoint_ids": "\x1f".join(addresses.values())})
+    if len(candidates) < 2:
+        return
+    request = {key: args[key] for key in _PENDING_CHOICE_ARGUMENTS if args.get(key) not in (None, "")}
+    with _RECIPIENT_QUESTIONS_LOCK:
+        _PENDING_RECIPIENT_CHOICES[session] = (
+            time.monotonic() + _RECIPIENT_QUESTION_TTL_SECONDS, turn, request, tuple(candidates))
+
+
+def _forget_pending_recipient_choice(context: dict[str, Any] | None) -> None:
+    session, _turn = _chat_and_turn(context)
+    if session:
+        with _RECIPIENT_QUESTIONS_LOCK:
+            _PENDING_RECIPIENT_CHOICES.pop(session, None)
+
+
+def take_pending_recipient_choice(context: dict[str, Any] | None) -> tuple[dict[str, Any], tuple[dict[str, str], ...]] | None:
+    """On Windows, the request and offered recipients of the "which one?" that ended this chat's last turn, removed as it
+    is read (it answers one message); None when there is none, it expired, or it was asked in this same turn."""
+    session, turn = _chat_and_turn(context)
+    if not session:
+        return None
+    with _RECIPIENT_QUESTIONS_LOCK:
+        held = _PENDING_RECIPIENT_CHOICES.get(session)
+        if held is None:
+            return None
+        until, asked_in, request, candidates = held
+        if turn and turn == asked_in:
+            return None  # the model's own next step in the asking turn is not the person's answer
+        del _PENDING_RECIPIENT_CHOICES[session]
+    if until <= time.monotonic():
+        return None
+    return dict(request), candidates
+
+
+def _turn_user_text(context: dict[str, Any] | None) -> str | None:
+    """The person's own message for this turn, verbatim (core.turn_contract.TurnRequest.user_text), or None when the
+    turn carries none (a direct or internal call), so a caller that needs it can fail closed."""
+    request = (context or {}).get("turn_request")
+    text = request.get("user_text") if isinstance(request, dict) else getattr(request, "user_text", None)
+    return text if isinstance(text, str) else None
+
+
 def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: dict[str, Any] | None) -> RuntimeExecutionResult:
     """The model-facing wallet surface: status, propose, simulate, payment_status.
 
@@ -2774,11 +2963,53 @@ def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: d
             # The recipient first (PA Contacts): an address given directly stays that address; a saved contact resolves to
             # exactly one wallet address saved for a fitting network of the active environment, or the request asks.
             # Nothing is proposed for a guessed payee, and a saved address is only ever used on the network it was saved for.
+            # Windows (0.7.3): "mainnet"/"testnet"/"devnet" name no chain or network, and an address given directly
+            # says its own family; a chain guessed from "mainnet" for it is dropped, a contradicting one is refused.
+            def _still_asked(question: str) -> RuntimeExecutionResult:
+                # The question again, word for word as the turn's first answer gave it, then the note: a repeat the
+                # loop blocks ends the turn on this text, so it must carry the question (composer retry on 6ca09fed:
+                # only "I already asked..." was shown and the question was lost). The first answer is a prefix of this
+                # one, so the tool output joined after a failed follow-up shows it once (Steve, 725f22b2).
+                return RuntimeExecutionResult(
+                    handled=True, ok=True, status="recipient_ambiguous",
+                    response_text=(f"{question} Nothing was proposed, signed or sent. I already asked which saved contact you "
+                                   "mean, so I won't pick one of their addresses myself."),
+                    details={"observation": _tool_observation(intent=intent, tool_surface="wallet", ok=True, status="recipient_ambiguous")},
+                )
+
+            asked = _asked_recipient_question(str(args.get("destination") or ""), context)
+            if asked:
+                return _still_asked(asked)
+            fitted = transfers.explicit_address_hints(str(args.get("destination") or ""), chain=str(args.get("chain") or ""),
+                                                      network=str(args.get("network") or ""),
+                                                      request_text=_turn_user_text(context))
+            if fitted.refusal:
+                refused = fitted.status or "recipient_chain_mismatch"
+                said = f"{fitted.refusal} Nothing was proposed, signed or sent."
+                if refused == "recipient_chain_mismatch":
+                    # The wallet's own answer for an address no account of the named chain can pay: the typed
+                    # wallet_not_found fault the resolver gives (no_signing_account_for_request), with the
+                    # plain sentence saying why. tests/wallet/test_crypto_pilot_request.py pins that answer.
+                    fault = WalletFault("wallet_not_found", context={
+                        "reason": "no_signing_account_for_request", "chain_mismatch": True,
+                        "chain": str(args.get("chain") or "").strip().lower()}, message=said)
+                    return RuntimeExecutionResult(
+                        handled=True, ok=False, status=fault.code, response_text=said,
+                        details={"fault": fault.to_dict(), "observation": _tool_observation(
+                            intent=intent, tool_surface="wallet", ok=False, status=fault.code, fault_code=fault.code)},
+                    )
+                return RuntimeExecutionResult(
+                    handled=True, ok=False, status=refused,
+                    response_text=said,
+                    details={"observation": _tool_observation(intent=intent, tool_surface="wallet", ok=False, status=refused)},
+                )
+            if (fitted.chain, fitted.network) != (str(args.get("chain") or "").strip(), str(args.get("network") or "").strip()):
+                args = {**args, "chain": fitted.chain, "network": fitted.network}
             requested_chain = str(args.get("chain") or "").strip().lower()
             recipient_outcome = resolve_wallet_recipient(
                 str(args.get("destination") or ""),
                 network=str(args.get("network") or "") or (legacy_profile.network if legacy_profile is not None else ""),
-                chain=transfers._CHAIN_HINTS.get(requested_chain, requested_chain),
+                chain=transfers.chain_hint(requested_chain),
                 asset=str(args.get("asset") or ("SOL" if legacy_profile is not None else "")),
                 environment=environment.active_environment().environment,
             )
@@ -2791,6 +3022,9 @@ def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: d
                 question = recipient_outcome.status in {
                     "recipient_ambiguous", "recipient_not_found", "recipient_has_no_address",
                 }
+                if recipient_outcome.status == "recipient_ambiguous":
+                    _remember_recipient_question(resolution, str(recipient_outcome.message or ""), context)
+                    _remember_pending_recipient_choice(resolution, args, context)
                 return RuntimeExecutionResult(
                     handled=True, ok=question, status=recipient_outcome.status,
                     response_text=f"{recipient_outcome.message} Nothing was proposed, signed or sent.",
@@ -2799,6 +3033,9 @@ def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: d
                         choices=list(resolution.get("choices") or []) or None, suggestions=list(resolution.get("suggestions") or []) or None)},
                 )
             recipient = recipient_outcome.snapshots[0]
+            asked = _asked_about_resolved_recipient(recipient, context)
+            if asked:
+                return _still_asked(asked)
             pinned_network = str(recipient.get("chain_network") or "") if recipient.get("resolution") == "contact" else ""
             if pilot_path:
                 # the caller path: one account on one row in the active environment, the amount parsed exactly
@@ -2821,6 +3058,7 @@ def _wallet_model_tool(intent: str, arguments: dict[str, Any], source_context: d
             from core.wallet import lifecycle
 
             prepared = lifecycle.default_lifecycle(source_context=context).prepare(proposal.proposal_id)
+            _forget_pending_recipient_choice(context)  # a proposal was made: no question is waiting on the person
             who = describe_snapshot(recipient) or prepared.destination
             text = (
                 f"Proposal {prepared.proposal_id}: {prepared.amount_minor} {prepared.asset} (minor units) to {who} on {prepared.network}. State: {prepared.state}.\n"
@@ -3342,8 +3580,25 @@ def _dispatch_runtime_tool(
     # journeys. Dispatched through its own api so receipts, budgets and the
     # per-origin permission store stay in ONE module.
     if intent.startswith("vool-browser."):
+        from core.vool_browser import live as live_browser
         from core.vool_browser.api import handle_intent as _browser_handle
+        from core.vool_browser.live_requests import confined as browser_confined
 
+        if live_browser.configured() or browser_confined():
+            try:
+                result = live_browser.tool_intent(intent, arguments, dict(source_context or {}))
+            except live_browser.BrowserFault as exc:
+                result = {"ok": False, "status": str(exc)}
+            _account_browser_opening(source_context, intent, arguments, result)
+            from core.i18n import catalog_for
+
+            label = catalog_for(str((source_context or {}).get("ui_locale") or "en")).text("live.browser")
+            view_url = "/browser?chat=" + quote(str((source_context or {}).get("session_id") or (source_context or {}).get("runtime_session_id") or ""))
+            return RuntimeExecutionResult(
+                handled=True, ok=bool(result.get("ok")), status=str(result.get("status") or result.get("state") or "ready"),
+                response_text=str(result.get("error") or "") if result.get("status") == "invalid_arguments" else f"[{label}]({view_url})",
+                details={"intent": intent, "observation": {"intent_observation": True, **result}},
+            )
         lane = _browser_handle(intent, arguments)
         return RuntimeExecutionResult(
             handled=True,
@@ -3867,6 +4122,14 @@ def execute_runtime_tool(
             },
         )
 
+    from core.vool_browser.live_requests import tool_allowed as browser_tool_allowed
+
+    if not browser_tool_allowed(intent, arguments):
+        from core.i18n import catalog_for
+
+        return RuntimeExecutionResult(handled=True, ok=False, status="browser_scope_required",
+                                      response_text=catalog_for("en").text("live.refused"),
+                                      details={"intent": intent, "executed": False, "allowed_toolset": "vool-browser"})
     from core.agent_team import gate as agent_team_gate
 
     # Agent-team write gate: a call made for an agent's chat session may only read, or write
@@ -4658,19 +4921,25 @@ def _workspace_identity(workspace_root: Path, *, project_name: str = "") -> Runt
     if not exists:
         text = f"The workspace is set to `{root}`, but that folder does not exist right now."
     else:
-        parts = [f"The workspace is set to `{root}`."]
-        # Name the chat's project the way the sidebar does, and call the folder a folder: "the
-        # project `Desktop`" gave a General chat a second name the sidebar never shows.
-        if project_name:
-            parts.append(f"This chat is in the project `{project_name}`.")
-        else:
-            parts.append("This chat is in General, not in a project.")
-        parts.append(
-            f"The folder `{name}`" + (" (a git repository)" if is_git else "")
-            + f" holds {files} file{'s' if files != 1 else ''} and "
+        from core import windows_write_gate
+
+        counts = (
+            f"{files} file{'s' if files != 1 else ''} and "
             f"{directories} folder{'s' if directories != 1 else ''} at the top level."
         )
-        text = " ".join(parts)
+        git_note = " (a git repository)" if is_git else ""
+        if windows_write_gate.active():
+            # Name the chat's project the way the sidebar does, and call the folder a folder: "the
+            # project `Desktop`" gave a General chat a second name the sidebar never shows.
+            project_line = (
+                f"This chat is in the project `{project_name}`."
+                if project_name
+                else "This chat is in General, not in a project."
+            )
+            text = f"The workspace is set to `{root}`. {project_line} The folder `{name}`{git_note} holds {counts}"
+        else:
+            # Off Windows the answer is Mac's, unchanged (Windows-only fixes by default, 16 Nov).
+            text = f"The workspace is set to `{root}`. That is the project `{name}`{git_note}, holding {counts}"
 
     return RuntimeExecutionResult(
         handled=True,
@@ -8280,6 +8549,10 @@ def _run_command(
         lines.append(f"- Stdout:\n{stdout}")
     if stderr:
         lines.append(f"- Stderr:\n{stderr}")
+    # The receipt says when this run had the network and why; every other run was offline.
+    network_egress = str(result.get("network_egress") or "")
+    if network_egress:
+        lines.append(f"- Network: {network_egress}")
     return RuntimeExecutionResult(
         handled=True,
         ok=not command_failed,
@@ -8289,6 +8562,7 @@ def _run_command(
             "command": command,
             "cwd": relative_cwd,
             "returncode": returncode,
+            **({"network_egress": network_egress} if network_egress else {}),
             "success": bool(result.get("success", False)),
             "stdout": stdout,
             "stderr": stderr,
@@ -8774,3 +9048,55 @@ def _skill_inspect(arguments: dict[str, Any]) -> RuntimeExecutionResult:
 from core.agent_team import gate as _agent_team_gate
 
 _agent_team_gate.mark_installed()
+
+
+def _account_browser_opening(
+    source_context: dict[str, Any] | None, intent: str, arguments: dict[str, Any], result: dict[str, Any]
+) -> None:
+    """File the turn's consumption receipt for an owner-approved browser opening.
+
+    The clause that asked to open an address is served by the approved opening's receipt;
+    without one the sweep can only call it indeterminate. Bound to the unit whose own words
+    name that address, read from the person's turn, never from the model's arguments or
+    the page. Written straight to the turn's active obligation set: the tool loop runs on a
+    copy of the turn context, so a record kept on that copy never reaches the sweep.
+
+    Only a success is filed. A refused or failed opening files no dispatch row either: once
+    a turn carries dispatch rows, every unit without one reads as provably not dispatched,
+    which would accuse clauses the model answered from the page. Absence stays
+    indeterminate. A pending approval is not an outcome and records nothing.
+    """
+    del source_context
+    if intent not in {"vool-browser.session.open", "vool-browser.navigate"}:
+        return
+    receipt = result.get("receipt") if isinstance(result.get("receipt"), dict) else {}
+    if not (result.get("ok") and receipt):
+        return
+    from core.agent_runtime.answer_coverage import demand_units, units_matching_needle
+    from core.conductor import obligation_ledger
+    from core.vool_browser.live_requests import turn_request, written_addresses
+
+    active = obligation_ledger.active_set()
+    request = turn_request()
+    if active is None or not request:
+        return
+    target = str(arguments.get("start_url") if intent.endswith(".open") else arguments.get("url") or "")
+    needles = written_addresses(request, target)
+    # Units are named in the set's own frozen request text, the text the sweep decomposes.
+    minted = obligation_ledger.request_text(active[0], active[1]) or request
+    # A spelling of the opened address also matches as the start of a longer one
+    # ("https://shop.example" inside "https://shop.example/orders"), so a unit counts only when
+    # an address it names is the one opened.
+    texts = {unit.unit_id: unit.text for unit in demand_units(minted)}
+    for unit_id in units_matching_needle(minted, *needles) if needles else ():
+        if not written_addresses(texts.get(unit_id, ""), target):
+            continue
+        obligation_ledger.record_slice_consumption(
+            active[0],
+            active[1],
+            unit_id=unit_id,
+            family="vool_browser",
+            # The lane-attested tier: the opening's own receipt attests it, not prose.
+            evidence="slice_answer_record",
+            excerpt="vool_browser_owner_approved_opening " + str(receipt.get("approved_proposal_id") or ""),
+        )

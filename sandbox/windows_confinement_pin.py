@@ -44,15 +44,37 @@ _HEX = frozenset("0123456789abcdef")
 _MAX_PIN_BYTES = 1 << 20
 
 
-def launcher_locations(project_root: Path) -> tuple[tuple[Path, Path], ...]:
-    """(confine folder, pin file) pairs, installed first, in the same order the broker executable is found.
+INSTALLED_APP_NAME = "app"
+INSTALL_MARKER_NAME = ".vool-install"
 
-    `project_root` is the app root: `{app}\\app` when installed, the repository root in a checkout."""
-    installed = project_root.parent
+
+def install_marker(project_root: Path) -> Path:
+    """Where a future install marker goes: inside `{app}\\app` itself, never in `{app}` or above.
+
+    Not consulted yet. The parent of an app root is exactly the folder that cannot be trusted for a
+    checkout (see `launcher_locations`), so a marker there would prove nothing."""
+    return project_root / INSTALL_MARKER_NAME
+
+
+def launcher_locations(project_root: Path) -> tuple[tuple[Path, Path], ...]:
+    """(confine folder, pin file) pairs, installed first.
+
+    `project_root` is the app root: `{app}\\app` when installed, the repository root in a checkout.
+    Only an absolute app root named `app` (the installed layout) probes its parent: a checkout's
+    parent can be a folder other accounts write to (a clone at C:\\vool has C:\\ as parent), and a
+    launcher and pin from there would verify each other. Any other root, and any relative root
+    (whose parent would be the current folder), yields only the checkout pair.
+
+    This is decided by the folder name alone, so a checkout cloned as C:\\app still probes C:\\
+    (E2-seams-08#1 stays open for that case until an install marker inside `{app}\\app` proves it)."""
     checkout = project_root / "windows" / "broker" / "publish"
+    checkout_pair = (checkout / FOLDER_NAME, checkout / PIN_NAME)
+    if not project_root.is_absolute() or project_root.name.casefold() != INSTALLED_APP_NAME:
+        return (checkout_pair,)
+    installed = project_root.parent
     return (
         (installed / "broker" / FOLDER_NAME, installed / "config" / PIN_NAME),
-        (checkout / FOLDER_NAME, checkout / PIN_NAME),
+        checkout_pair,
     )
 
 

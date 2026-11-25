@@ -96,6 +96,17 @@ function loadRegistry(){
   fetchJson('/api/commands/schema').then(function(data){ SCHEMA = data || null; });
 }
 function companion(){ return window.VoolCompanion || null; }
+// Every shortcut handler accepts meta OR ctrl; a label names the one the viewer's keyboard
+// carries: the ⌘ glyph on Apple platforms, Ctrl everywhere else (WebKitGTK, WebView2, browsers).
+// One detector for the whole fragment (IS_MAC above) so the hint bar and the rows can never
+// disagree when an engine reports a platform in only one of navigator.platform / userAgentData.
+var VP_APPLE = IS_MAC;
+function vpCombo(key){ return (VP_APPLE ? '⌘' : 'Ctrl+') + key; }
+function vpKbdLabel(kbd){
+  // Registered caps are written in the Apple form ('⌘N'); only the modifier is re-labelled.
+  kbd = String(kbd || '');
+  return kbd.charAt(0) === '⌘' ? vpCombo(kbd.slice(1)) : kbd;
+}
 function register(id, label, run, kbd, keywords){
   ACTIONS.push({ id: String(id), label: String(label), run: run, kbd: kbd || '', keywords: String(keywords || '') });
 }
@@ -198,7 +209,7 @@ function renderList(){
         if (action.command) return registryRow(action.command, index);
         return '<div class="vp-item' + (index === selected ? ' vp-sel' : '') + '" role="option"' +
           ' aria-selected="' + (index === selected) + '" data-vp="' + esc(action.id) + '">' +
-          esc(action.label) + (action.kbd ? '<span class="vp-kbd">' + esc(typeof voolKeyLabel === 'function' ? voolKeyLabel(action.kbd) : action.kbd) + '</span>' : '') +
+          esc(action.label) + (action.kbd ? '<span class="vp-kbd">' + esc(typeof voolKeyLabel === 'function' ? voolKeyLabel(action.kbd) : vpKbdLabel(action.kbd)) + '</span>' : '') +
           '</div>';
       }).join('')
     : '<div class="vp-empty">No matching command</div>';
@@ -330,8 +341,8 @@ function isEditable(el){
 }
 function vpHintT(key, fallback){
   // The shortcut labels resolve through the page's i18n bundle; the inline English
-  // is the honest fallback until a catalog resolves them. The <kbd> key caps and the
-  // separators are structure, never translated words.
+  // is the fallback until a catalog resolves them. The <kbd> key caps (named for
+  // this platform by vpCombo) and the separators are structure, never translated words.
   try {
     if (typeof VOOLT === 'function') { var t = VOOLT(key); if (t && t !== key) return t; }
   } catch (e) {}
@@ -339,17 +350,17 @@ function vpHintT(key, fallback){
 }
 function vpMountHint(){
   var input = document.getElementById('input');
-  if (!input || document.getElementById('vpHint')) return;
+  if (!input) return;
   var host = input.closest('.composer-row') ? input.closest('.composer-row').parentNode : input.parentNode;
   if (!host) return;
-  var hint = document.createElement('div');
+  var hint = document.getElementById('vpHint') || document.createElement('div');
   hint.id = 'vpHint';
-  hint.innerHTML = '<kbd>⌘K</kbd> ' + vpHintT('palette.hint_palette', 'palette')
-    + ' \u00b7 <kbd>⌘N</kbd> ' + vpHintT('palette.hint_new_chat', 'new chat')
-    + ' \u00b7 <kbd>⌘J</kbd> ' + vpHintT('palette.hint_activity', 'activity')
-    + ' \u00b7 <kbd>⌘/</kbd> ' + vpHintT('palette.hint_pet', 'pet appearance')
-    + ' \u00b7 <kbd>⌘F</kbd> ' + vpHintT('palette.hint_search_chats', 'search chats')
-    + ' \u00b7 <kbd>⌘,</kbd> ' + vpHintT('palette.hint_settings', 'settings')
+  hint.innerHTML = '<kbd>' + vpCombo('K') + '</kbd> ' + vpHintT('palette.hint_palette', 'palette')
+    + ' \u00b7 <kbd>' + vpCombo('N') + '</kbd> ' + vpHintT('palette.hint_new_chat', 'new chat')
+    + ' \u00b7 <kbd>' + vpCombo('J') + '</kbd> ' + vpHintT('palette.hint_activity', 'activity')
+    + ' \u00b7 <kbd>' + vpCombo('/') + '</kbd> ' + vpHintT('palette.hint_pet', 'pet appearance')
+    + ' \u00b7 <kbd>' + vpCombo('F') + '</kbd> ' + vpHintT('palette.hint_search_chats', 'search chats')
+    + ' \u00b7 <kbd>' + vpCombo(',') + '</kbd> ' + vpHintT('palette.hint_settings', 'settings')
     + ' \u00b7 <kbd>Esc</kbd> ' + vpHintT('palette.hint_esc_stop', 'stop');
   // The key caps name the keys THIS keyboard has: ⌘ on a Mac, Ctrl everywhere else. In a plain
   // browser tab Ctrl+N belongs to the browser (it opens a window), so it is not advertised there.
@@ -365,6 +376,7 @@ function vpMountHint(){
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', vpMountHint);
 else vpMountHint();
+window.addEventListener('pywebviewready', vpMountHint);
 loadRegistry();
 
 document.addEventListener('keydown', function(ev){
@@ -455,15 +467,29 @@ window.VoolPalette = Object.freeze({
 # caps say ⌘, which a Windows keyboard does not have. A Windows host is served these exact pieces
 # with Ctrl; every other host gets the script byte for byte.
 _WINDOWS_SHORTCUT_LABELS = (
+    # Every key-cap decision on the page (MOD, VP_APPLE, the browser-tab Ctrl+N withholding) reads IS_MAC.
+    # A Windows page is served IS_MAC = false, so all of them agree on the Windows keyboard even when the
+    # engine reports an Apple platform: a cap never says Ctrl+N where Ctrl+N belongs to the browser.
+    ("var IS_MAC = /Mac|iPhone|iPad/.test((navigator.userAgentData && navigator.userAgentData.platform)"
+     " || navigator.platform || '');",
+     "var IS_MAC = false;"),
     # The palette rows' key caps come from MOD (0.7.2); a Windows page is served Ctrl+ for it, whatever the
     # browser says its platform is.
     ("var MOD = IS_MAC ? '\u2318' : 'Ctrl+';", "var MOD = 'Ctrl+';"),
-    ("<kbd>⌘K</kbd>", "<kbd>Ctrl+K</kbd>"),
-    ("<kbd>⌘N</kbd>", "<kbd>Ctrl+N</kbd>"),
-    ("<kbd>⌘J</kbd>", "<kbd>Ctrl+J</kbd>"),
-    ("<kbd>⌘/</kbd>", "<kbd>Ctrl+/</kbd>"),
-    ("<kbd>⌘F</kbd>", "<kbd>Ctrl+F</kbd>"),
-    ("<kbd>⌘,</kbd>", "<kbd>Ctrl+,</kbd>"),
+    # 0.7.3 builds the hint bar's key caps and relabels registered caps in the browser, from IS_MAC
+    # (vpCombo / vpKbdLabel). A Windows page is served the Ctrl caps themselves, so an engine that
+    # reports an Apple platform still shows the keys a Windows keyboard has.
+    ("function vpCombo(key){ return (VP_APPLE ? '⌘' : 'Ctrl+') + key; }",
+     "function vpCombo(key){ return 'Ctrl+' + key; }"),
+    # A Windows page registers every cap as Ctrl+ already (MOD above, and the drawer's own swap), so
+    # there is no Apple cap left to relabel.
+    ("  return kbd.charAt(0) === '⌘' ? vpCombo(kbd.slice(1)) : kbd;", "  return kbd;"),
+    ("<kbd>' + vpCombo('K') + '</kbd>", "<kbd>Ctrl+K</kbd>"),
+    ("<kbd>' + vpCombo('N') + '</kbd>", "<kbd>Ctrl+N</kbd>"),
+    ("<kbd>' + vpCombo('J') + '</kbd>", "<kbd>Ctrl+J</kbd>"),
+    ("<kbd>' + vpCombo('/') + '</kbd>", "<kbd>Ctrl+/</kbd>"),
+    ("<kbd>' + vpCombo('F') + '</kbd>", "<kbd>Ctrl+F</kbd>"),
+    ("<kbd>' + vpCombo(',') + '</kbd>", "<kbd>Ctrl+,</kbd>"),
 )
 
 

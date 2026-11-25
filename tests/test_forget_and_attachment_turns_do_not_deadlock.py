@@ -66,6 +66,14 @@ def _run_both(first, second, started: threading.Event) -> dict:
     return results
 
 
+@pytest.fixture
+def windows_gate_on(monkeypatch):
+    """Run with the Windows gate on: these tests pin the Windows forget line redaction (Jesse OK 16 Nov 18:25Z)."""
+    from core import windows_write_gate as gate
+
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+
+
 def test_a_forget_and_another_chats_attachment_serve_both_finish(tmp_path, monkeypatch):
     rng = random.Random(5521)
     profile, chat, value = _forget_in_another_chat(tmp_path, rng)
@@ -96,6 +104,7 @@ def test_a_forget_and_another_chats_attachment_serve_both_finish(tmp_path, monke
     assert not ca.documents_carrying(chat, value)
 
 
+@pytest.mark.usefixtures("windows_gate_on")
 def test_a_forget_and_another_chats_upload_both_finish(tmp_path, monkeypatch):
     import core.memory.revocation as revocation
 

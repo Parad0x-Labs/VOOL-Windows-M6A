@@ -229,7 +229,9 @@ def test_an_env_wrapped_program_is_refused_on_windows(windows, monkeypatch, tmp_
 
 @pytest.mark.parametrize(
     "command",
-    ["find . -exec git status ;", "find . -execdir x.exe {} +", "find . -ok x.exe {} ;", "rg --pre=x.exe foo", "rg --pre x.exe foo", "rg --hostname-bin=x.exe foo"],
+    # The ; that ends -exec/-ok is quoted, as a shell needs it: Mac 0.7.3's command-line card refuses a bare ; or
+    # {} in a chained line before the program check runs, which fails closed too but names another reason.
+    ["find . -exec git status ';'", "find . -execdir x.exe {} +", "find . -ok x.exe '{}' ';'", "rg --pre=x.exe foo", "rg --pre x.exe foo", "rg --hostname-bin=x.exe foo"],
 )
 def test_a_whitelisted_tool_that_would_start_another_program_is_refused_on_windows(windows, monkeypatch, tmp_path, command):
     from core.execution_gate import ExecutionGate
