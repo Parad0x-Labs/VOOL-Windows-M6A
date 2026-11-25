@@ -70,6 +70,13 @@ _REOPEN_GRACE_SECONDS = 10.0
 # the host has had this much awake time since its start to show the window. The host says it showed
 # the window by writing its pid to the file named in VOOL_WINDOW_SHOWN_PATH (vool_window.py).
 _HIDDEN_WINDOW_GRACE_SECONDS = 30.0
+# Every window start the supervisor makes itself (its own start, a reopen after the API restarted) is
+# checked too, without waiting for a second launch: Steve, 0.7.3 row 7, after VOOL's own stop and start
+# the host stayed hidden for 661 s, until the next launch's reopen request. With no one waiting on a
+# launch, a slow start gets more time, and the host is started again at most once per start that the
+# window never showed after (a host that cannot show must not be restarted forever).
+_UNREQUESTED_HIDDEN_GRACE_SECONDS = 90.0
+_UNREQUESTED_HIDDEN_RESTARTS = 1
 # A window reopened after its runtime was lost whose host exits 1 within this much awake time of its
 # start never attached: the host checks the API once as it starts, and exits 1 at once without
 # showing a window when that check misses. Its life is measured up to the first measured instant
@@ -395,6 +402,10 @@ class BundleSupervisor:
         self.window_reopen_until = 0.0
         # A reopen request came while the window host ran: check that it showed its window.
         self._window_shown_check = False
+        # Windows: the window host started now was started by this supervisor; check that it shows.
+        self._window_start_check = False
+        # Hidden-window restarts made without a reopen request since the window last showed.
+        self._window_unrequested_restarts = 0
         # Set by a window's exit 3 and cleared by any exit but 1: the window opening or open now is
         # one this supervisor reopened after its runtime was lost.
         self._window_lost_runtime = False
@@ -1067,6 +1078,7 @@ class BundleSupervisor:
             with contextlib.suppress(OSError):
                 self.window_shown_path.unlink()
         self._window_shown_check = False
+        self._window_start_check = _is_windows_platform()
         api = self.processes.get("api")
         if api is not None and api.poll() is None:
             window_env["VOOL_NATIVE_VOUCHING_PID"] = str(api.pid)
@@ -1164,6 +1176,7 @@ class BundleSupervisor:
             self.window_reopen_until = now + _REOPEN_GRACE_SECONDS
             if "window" in self.processes:
                 self._window_shown_check = True
+            self._window_unrequested_restarts = 0   # the user asked for the window: try again
         if "window" not in self.processes and now < self.window_reopen_until:
             self.window_started = False
             self.window_reopen_until = 0.0
@@ -1175,27 +1188,39 @@ class BundleSupervisor:
             return False
 
     def _recreate_hidden_window(self) -> None:
-        """After a reopen request, a window host that is running but never showed its window is
-        started again. It is given _HIDDEN_WINDOW_GRACE_SECONDS of awake time from its start first,
-        because a slow first start is not a hidden window. A host that showed its window (and may
-        be minimized or behind others) is left as it is; the second launch brings it forward."""
-        if not self._window_shown_check or not _is_windows_platform():
+        """A window host that is running but never showed its window is started again. After a
+        reopen request it is given _HIDDEN_WINDOW_GRACE_SECONDS of awake time from its start first,
+        because a slow first start is not a hidden window. Every other start the supervisor made
+        (Windows) is given _UNREQUESTED_HIDDEN_GRACE_SECONDS and is started again at most
+        _UNREQUESTED_HIDDEN_RESTARTS times until the window shows or a launch asks again. A host
+        that showed its window (and may be minimized or behind others) is left as it is; the second
+        launch brings it forward."""
+        if not (self._window_shown_check or self._window_start_check) or not _is_windows_platform():
             return
         child = self.processes.get("window")
         if child is None or child.poll() is not None:
-            self._window_shown_check = False   # _reap_window and _consume_window_reopen handle it
+            # _reap_window and _consume_window_reopen handle it
+            self._window_shown_check = self._window_start_check = False
             return
         if self._window_was_shown(child.pid):
-            self._window_shown_check = False
+            self._window_shown_check = self._window_start_check = False
+            self._window_unrequested_restarts = 0
+            return
+        requested = self._window_shown_check
+        if not requested and self._window_unrequested_restarts >= _UNREQUESTED_HIDDEN_RESTARTS:
+            self._window_start_check = False
+            self._log(f"window host pid={child.pid} has not shown its window; left for the next launch")
             return
         started = self.started_at.get("window")
         lived = 0.0 if started is None else self._last_measured() - started
-        if lived < _HIDDEN_WINDOW_GRACE_SECONDS:
+        if lived < (_HIDDEN_WINDOW_GRACE_SECONDS if requested else _UNREQUESTED_HIDDEN_GRACE_SECONDS):
             return   # checked again on a later pass
-        self._window_shown_check = False
+        self._window_shown_check = self._window_start_check = False
+        if not requested:
+            self._window_unrequested_restarts += 1
         self._log(
-            f"window host pid={child.pid} never showed its window ({lived:.0f}s since its start); "
-            "starting it again"
+            f"window host pid={child.pid} never showed its window ({lived:.0f}s since its start"
+            f"{'' if requested else ', no launch asked'}); starting it again"
         )
         self._stop_child("window")
         self.window_started = False
