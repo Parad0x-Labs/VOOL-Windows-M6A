@@ -15143,9 +15143,10 @@ _WINDOWS_FETCH_LANES_JS = r'''
   const BACKGROUND = new Set(['/api/update/status', '/api/runtime/version', '/api/runtime/events',
     '/api/runtime/sessions', '/api/connections', '/api/chat/sessions', '/api/runtime/receipts',
     '/api/runtime/usage', '/api/windows/broker/status']);
-  const MAX_BACKGROUND = 2, SLOW_WAIT_MS = 1000, SLOW_REPLY_MS = 5000;
+  // A background read gets LANE_CAP_MS on the network, so a hung one gives its slot back.
+  const MAX_BACKGROUND = 2, SLOW_WAIT_MS = 1000, SLOW_REPLY_MS = 5000, LANE_CAP_MS = 10000;
   const waiting = [];
-  const unsettled = new Map();   // url -> the shared answer of a read without a signal, until it settles
+  const queuedShare = new Map();   // url -> the answer of a read without a signal, while it waits
   let active = 0;
   function backgroundKey(input, init) {
     try {
@@ -15163,18 +15164,33 @@ _WINDOWS_FETCH_LANES_JS = r'''
     const started = Date.now();
     return send(input, init).then((response) => {
       const ms = Date.now() - started;
-      if (ms > SLOW_REPLY_MS) console.warn('[vool-lanes] slow reply', label, ms + ' ms');
+      if (ms > SLOW_REPLY_MS) console.warn('[vool-lanes] slow reply on the network', label, ms + ' ms');
       return response;
     });
   }
   function pump() {
     while (active < MAX_BACKGROUND && waiting.length) {
       const job = waiting.shift();
+      if (queuedShare.get(job.key) === job.shared) queuedShare.delete(job.key);   // in flight: no new sharers
       active++;
       const waited = Date.now() - job.queued;
-      if (waited > SLOW_WAIT_MS) console.warn('[vool-lanes] background read waited', pathOf(job.key), waited + ' ms');
-      timed(job.input, job.init, pathOf(job.key)).then(job.resolve, job.reject)
-        .finally(() => { active--; pump(); });
+      if (waited > SLOW_WAIT_MS) console.warn('[vool-lanes] background read waited in the lane', pathOf(job.key), waited + ' ms');
+      // The read's own controller, tied to the caller's signal, so the cap can end it.
+      const controller = new AbortController();
+      const onAbort = () => controller.abort();
+      if (job.signal) job.signal.addEventListener('abort', onAbort, { once: true });
+      const cap = setTimeout(() => {
+        console.warn('[vool-lanes] background read gave its slot back after', LANE_CAP_MS + ' ms', pathOf(job.key));
+        controller.abort();
+      }, LANE_CAP_MS);
+      const init = Object.assign({}, job.init || {}, { signal: controller.signal });
+      timed(job.input, init, pathOf(job.key)).then(job.resolve, job.reject)
+        .finally(() => {
+          clearTimeout(cap);
+          if (job.signal) job.signal.removeEventListener('abort', onAbort);
+          active--;
+          pump();
+        });
     }
   }
   function abortError() {
@@ -15184,24 +15200,22 @@ _WINDOWS_FETCH_LANES_JS = r'''
     const key = backgroundKey(input, init);
     if (!key) return timed(input, init, pathOf(String((input && input.url) || input)));
     const signal = (init && init.signal) || (input && input.signal) || null;
-    if (!signal && unsettled.has(key)) {
-      // An identical read already waiting or in flight answers this one too; each caller reads
-      // its own copy of the answer.
-      return unsettled.get(key).then((response) => response.clone());
+    if (!signal && queuedShare.has(key)) {
+      // An identical read still waiting in the lane answers this one too (never one already in
+      // flight, which started before this caller asked); each caller reads its own copy.
+      return queuedShare.get(key).then((response) => response.clone());
     }
     let job;
     const base = new Promise((resolve, reject) => {
       job = { key, input, init, signal, queued: Date.now(), resolve, reject };
     });
-    if (!signal) {
-      unsettled.set(key, base);
-      base.then(() => unsettled.delete(key), () => unsettled.delete(key));
-    }
+    job.shared = base;
+    if (!signal) queuedShare.set(key, base);
     if (signal) {
       if (signal.aborted) return Promise.reject(abortError());
       signal.addEventListener('abort', () => {
         const at = waiting.indexOf(job);
-        if (at >= 0) { waiting.splice(at, 1); job.reject(abortError()); }
+        if (at >= 0) { waiting.splice(at, 1); job.reject(abortError()); }   // a waiting read leaves the lane
       }, { once: true });
     }
     waiting.push(job);
