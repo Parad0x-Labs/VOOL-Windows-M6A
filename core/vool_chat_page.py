@@ -15128,6 +15128,106 @@ def _windows_cloud_off(page: str) -> str:
     return page
 
 
+#: Windows: the page's periodic reads share a lane of at most two connections (see the script), and
+#: the exact brake slash commands are sent without the model pre-read: the server answers them in
+#: /api/chat before any model or spend (core.vool_agent_brake), so there is no paid turn to confirm.
+_WINDOWS_FETCH_LANES_JS = r'''
+// Windows: WebView2 opens at most 6 connections to this host, and a running turn holds one for its
+// whole stream. The page's periodic reads (update chip, reminder history, ledger, sidebar) could
+// stack while the server was slow and take all six, so Send, the pre-read and the brake waited in
+// the browser past their 5 s timer. Those reads now share a lane of at most two connections; every
+// other request goes straight out and never waits here.
+(function voolFetchLanes() {
+  if (window.__voolFetchLanes || typeof window.fetch !== 'function') return;
+  const send = window.fetch.bind(window);
+  const BACKGROUND = new Set(['/api/update/status', '/api/runtime/version', '/api/runtime/events',
+    '/api/runtime/sessions', '/api/connections', '/api/chat/sessions', '/api/runtime/receipts',
+    '/api/runtime/usage', '/api/windows/broker/status']);
+  const MAX_BACKGROUND = 2, SLOW_WAIT_MS = 1000, SLOW_REPLY_MS = 5000;
+  const waiting = [];
+  const unsettled = new Map();   // url -> the shared answer of a read without a signal, until it settles
+  let active = 0;
+  function backgroundKey(input, init) {
+    try {
+      const method = String((init && init.method) || (input && input.method) || 'GET').toUpperCase();
+      if (method !== 'GET') return '';
+      const url = new URL(typeof input === 'string' ? input : String((input && input.url) || input), location.href);
+      if (url.origin !== location.origin) return '';
+      const path = url.pathname.replace(/\/+$/, '');
+      if (BACKGROUND.has(path) || (path === '/api/chat/history' && url.searchParams.has('event_kind'))) return url.href;
+    } catch (e) {}
+    return '';
+  }
+  function pathOf(url) { try { return new URL(url, location.href).pathname; } catch (e) { return ''; } }
+  function timed(input, init, label) {
+    const started = Date.now();
+    return send(input, init).then((response) => {
+      const ms = Date.now() - started;
+      if (ms > SLOW_REPLY_MS) console.warn('[vool-lanes] slow reply', label, ms + ' ms');
+      return response;
+    });
+  }
+  function pump() {
+    while (active < MAX_BACKGROUND && waiting.length) {
+      const job = waiting.shift();
+      active++;
+      const waited = Date.now() - job.queued;
+      if (waited > SLOW_WAIT_MS) console.warn('[vool-lanes] background read waited', pathOf(job.key), waited + ' ms');
+      timed(job.input, job.init, pathOf(job.key)).then(job.resolve, job.reject)
+        .finally(() => { active--; pump(); });
+    }
+  }
+  function abortError() {
+    try { return new DOMException('The operation was aborted.', 'AbortError'); } catch (e) { return new Error('aborted'); }
+  }
+  window.fetch = function (input, init) {
+    const key = backgroundKey(input, init);
+    if (!key) return timed(input, init, pathOf(String((input && input.url) || input)));
+    const signal = (init && init.signal) || (input && input.signal) || null;
+    if (!signal && unsettled.has(key)) {
+      // An identical read already waiting or in flight answers this one too; each caller reads
+      // its own copy of the answer.
+      return unsettled.get(key).then((response) => response.clone());
+    }
+    let job;
+    const base = new Promise((resolve, reject) => {
+      job = { key, input, init, signal, queued: Date.now(), resolve, reject };
+    });
+    if (!signal) {
+      unsettled.set(key, base);
+      base.then(() => unsettled.delete(key), () => unsettled.delete(key));
+    }
+    if (signal) {
+      if (signal.aborted) return Promise.reject(abortError());
+      signal.addEventListener('abort', () => {
+        const at = waiting.indexOf(job);
+        if (at >= 0) { waiting.splice(at, 1); job.reject(abortError()); }
+      }, { once: true });
+    }
+    waiting.push(job);
+    pump();
+    return signal ? base : base.then((response) => response.clone());
+  };
+  window.__voolFetchLanes = true;
+})();
+'''
+_WINDOWS_BRAKE_SLASH_JS = (
+    "const VOOL_BRAKE_SLASH_RE = /^\\s*\\/(?:freeze|unfreeze|stopx402|startx402|stopall)\\s*$/i;\n"
+    "function voolBrakeSlash(text) { return VOOL_BRAKE_SLASH_RE.test(String(text || '')); }\n"
+)
+_WINDOWS_PAGE_LANES = (
+    ("    let sendRequiresPaidAck = false;\n    try {\n      const selJ = await fetchJsonWithin('/api/cloud/model?session_id='",
+     "    let sendRequiresPaidAck = false;\n    if (!voolBrakeSlash(lastUser.content || '')) try {\n"
+     "      const selJ = await fetchJsonWithin('/api/cloud/model?session_id='"),
+)
+
+
+def _windows_page_lanes(page: str) -> str:
+    for mac, windows in _WINDOWS_PAGE_LANES:
+        page = page.replace(mac, windows, 1)
+    return page.replace("<script>\n", "<script>\n" + _WINDOWS_FETCH_LANES_JS + _WINDOWS_BRAKE_SLASH_JS, 1)
+
+
 def _host_chat_template() -> str:
     from core.generated_files import host_is_windows
 
@@ -15136,7 +15236,7 @@ def _host_chat_template() -> str:
     page = _VOOL_CHAT_HTML
     for mac, windows in _WINDOWS_FILE_ACTIONS:
         page = page.replace(mac, windows)
-    return _windows_cloud_off(page)
+    return _windows_cloud_off(_windows_page_lanes(page))
 
 
 def _no_model_leads_js() -> str:

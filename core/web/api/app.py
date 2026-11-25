@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import os
 import time
 from collections.abc import Callable
 from urllib.parse import parse_qs
@@ -31,6 +32,9 @@ from .service import (
 )
 
 logger = logging.getLogger("vool.api.http")
+#: Windows only: a request slower than this writes a WARNING line (path only, never the query).
+_SLOW_REQUEST_LOG = os.name == "nt"
+_SLOW_REQUEST_MS = 1000.0
 
 # Global request-body ceiling applied BEFORE json.loads, so an oversized body cannot force a
 # large in-memory parse on any route (the per-route 413 only guarded the settings POSTs). Chat
@@ -273,6 +277,11 @@ async def _dispatch(request: Request) -> Response:
         response = json_response(404, {"error": "not found"})
     response.headers = response_headers_with_request_id(response.headers, request_id=request_id)
     latency_ms = (time.perf_counter() - started) * 1000.0
+    if _SLOW_REQUEST_LOG and latency_ms > _SLOW_REQUEST_MS:
+        # Windows: one plain line per slow request, so a page timeout can be matched to the handler
+        # that held it (0.7.5: the brake and Send timing out behind slow reads).
+        logger.warning("slow api request %s %s status=%s %.0f ms request_id=%s",
+                       request.method, request.url.path, response.status, latency_ms, request_id)
     log_http_request(
         logger,
         component="api",
