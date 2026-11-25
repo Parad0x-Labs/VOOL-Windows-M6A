@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from core import safe_git, windows_path_policy, windows_write_gate
+from core import git_metadata_protection, safe_git, windows_path_policy, windows_write_gate
 
 from .artifacts import (
     DestinationChangedError,
@@ -382,6 +382,10 @@ def apply_unified_diff_workspace(
         try:
             resolve_workspace_path(relative, workspace_root=workspace_root, write=True)
         except ValueError as exc:
+            if git_metadata_protection.REFUSAL_PREFIX not in str(exc):
+                # Port: any other refused path (outside the workspace, VOOL's own state) is refused below,
+                # still before any engine runs, as invalid_arguments with "Nothing was written".
+                continue
             return {
                 "ok": False,
                 "status": "workspace_path_refused",
