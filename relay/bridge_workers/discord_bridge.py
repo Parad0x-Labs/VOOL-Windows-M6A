@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import time
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,30 @@ def _owner_file() -> Path:
     return home / "config" / "discord_bridge.json"
 
 
+def _something_unreadable_in_place(path: Path) -> bool:
+    """Windows: whether a "not found" for the owner file hides something VOOL cannot read. A dangling
+    link at the path stats as not found, and so does a file where a folder above it should be (Windows
+    reports ERROR_PATH_NOT_FOUND, not ENOTDIR). Either one refuses everyone rather than pairing."""
+    try:
+        os.lstat(path)
+        return True  # something is there (a dangling link), and it is not a readable owner file
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return True
+    # The nearest folder above that exists must be a folder. Followed, so a home reached through a
+    # link to a folder still counts as one.
+    for folder in path.parents:
+        try:
+            info = os.stat(folder)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            return True
+        return not stat.S_ISDIR(info.st_mode)
+    return False
+
+
 class DiscordBridge:
     def __init__(self):
         self.webhook_url = os.environ.get("DISCORD_WEBHOOK_URL")
@@ -76,6 +101,9 @@ class DiscordBridge:
             try:
                 os.stat(path)
             except FileNotFoundError:
+                if _something_unreadable_in_place(path):
+                    print(f"[DiscordBridge] Owner file {path} is unreadable; refusing every Discord user.")
+                    return _OWNER_UNREADABLE
                 return None
             except OSError:
                 print(f"[DiscordBridge] Owner file {path} is unreadable; refusing every Discord user.")
