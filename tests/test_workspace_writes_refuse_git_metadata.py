@@ -43,7 +43,7 @@ def repo(tmp_path_factory, monkeypatch) -> Path:
         # Windows port: file tools write only inside a marked disposable folder, so mark this repository.
         monkeypatch.setenv(windows_write_gate.ENV_VAR, str(root))
     _git(root, "init", "-q")
-    (root / "f.txt").write_text("one\n", encoding="utf-8")
+    (root / "f.txt").write_text("one\n", encoding="utf-8", newline="\n")  # Windows port: LF on every OS
     (root / "h.sh").write_text(f"#!/bin/sh\ntouch \"$(git rev-parse --show-toplevel)/{MARK}\"\n", encoding="utf-8")
     return root
 

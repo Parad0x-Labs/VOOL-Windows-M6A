@@ -61,9 +61,26 @@ def install_fixture_network():
     # while retaining its union-of-prohibitions ownership.
     from tests import _network_seal
 
+    # On Windows socket.socketpair() is emulated by a loopback TCP connect to a listener it just
+    # bound on an ephemeral port (socket._fallback_socketpair); asyncio's proactor loop makes one
+    # for its self-pipe. That in-process pair is allowed, and only while socketpair runs.
+    pairing = threading.local()
+    pair = socket.socketpair
+
+    def owned_pair(*args, **kwargs):
+        pairing.active = True
+        try:
+            return pair(*args, **kwargs)
+        finally:
+            pairing.active = False
+
+    socket.socketpair = owned_pair
+
     def owned_only(_kind, address):
         if isinstance(address, str):
             return  # in-process Unix sockets, never a network destination
+        if getattr(pairing, "active", False) and isinstance(address, tuple) and str(address[0]) in {"127.0.0.1", "::1"}:
+            return
         if not isinstance(address, tuple) or str(address[0]) not in hosts or int(address[1]) not in ports:
             raise OSError("fixture refuses an unowned network destination")
 
