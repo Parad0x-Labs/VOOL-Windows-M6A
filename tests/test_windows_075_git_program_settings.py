@@ -4,8 +4,9 @@ Mac 0.7.5 learns which files a repository's settings run (core.fsmonitor, a filt
 `git config --list`. On Windows core.safe_git refuses git, so core.git_metadata_protection reads the repository's
 own config itself (core.git_metadata_protection._local_targets). These rows pin that reading: a plain repository,
 a linked worktree (its config lives in the repository named by `commondir`), a worktree's own `config.worktree`,
-a pointer whose config is missing (refused, never read as "no settings"), and a script in another marked folder
-that a repository in a marked folder would run. Repositories are built by hand, so no git binary is needed; the
+a pointer whose config is missing (refused, never read as "no settings"), a script in another marked folder
+that a repository in a marked folder would run, a config saved with a byte-order mark, a value an inline comment
+ends, a command word Windows runs with a PATHEXT suffix, and the user's global hooks folder. Repositories are built by hand, so no git binary is needed; the
 Windows side is switched through safe_git._REFUSE_GIT and the marked folders through the write gate's variable.
 """
 from __future__ import annotations
@@ -20,8 +21,13 @@ from core.git_metadata_protection import REFUSAL_PREFIX, refusal
 
 
 @pytest.fixture(autouse=True)
-def _windows(monkeypatch):
+def _windows(tmp_path, monkeypatch):
     monkeypatch.setattr(safe_git, "_REFUSE_GIT", True)
+    home = tmp_path / "user"
+    home.mkdir()
+    for name in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(name, str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.delenv(windows_write_gate.ENV_VAR, raising=False)
     git_metadata_protection._TARGETS_CACHE.clear()
     yield
@@ -105,6 +111,48 @@ def test_a_script_in_another_marked_folder_that_a_marked_repository_runs_is_refu
     git_metadata_protection._TARGETS_CACHE.clear()
     assert refusal(other / "watch.sh").startswith(REFUSAL_PREFIX)
     assert refusal(other / "notes.md") == ""
+
+
+def test_a_config_saved_with_a_byte_order_mark_is_read_and_ordinary_files_stay_writable(tmp_path) -> None:
+    repo = _repo(tmp_path / "repo", "\tfsmonitor = tools/watch.sh\n")
+    config = repo / ".git" / "config"
+    config.write_bytes(b"\xef\xbb\xbf" + config.read_bytes())
+    assert refusal(repo / "tools" / "watch.sh").startswith(REFUSAL_PREFIX)
+    assert refusal(repo / "tools" / "other.sh") == ""
+
+
+@pytest.mark.parametrize("value", ["tools/mon.exe;note", "tools/mon.exe # note", '"tools/mon.exe" ; x'])
+def test_an_inline_comment_ends_the_value_as_git_reads_it(tmp_path, value) -> None:
+    repo = _repo(tmp_path / "repo", f"\tfsmonitor = {value}\n")
+    assert refusal(repo / "tools" / "mon.exe").startswith(REFUSAL_PREFIX)
+
+
+def test_a_quoted_semicolon_stays_part_of_the_value(tmp_path) -> None:
+    repo = _repo(tmp_path / "repo", '\tfsmonitor = "tools/a;b.sh"\n')
+    assert refusal(repo / "tools" / "a;b.sh").startswith(REFUSAL_PREFIX)
+
+
+@pytest.mark.parametrize("suffix", ["", ".exe", ".cmd", ".bat", ".com"])
+def test_a_command_word_without_a_suffix_protects_what_windows_would_run(tmp_path, suffix) -> None:
+    repo = _repo(tmp_path / "repo", '[filter "x"]\n\tclean = ./tools/clean\n')
+    assert refusal(repo / "tools" / ("clean" + suffix)).startswith(REFUSAL_PREFIX)
+    assert refusal(repo / "tools" / "clean.txt") == ""
+
+
+def test_a_linked_worktree_protects_a_program_the_repository_config_names_with_its_suffix(tmp_path) -> None:
+    main = _repo(tmp_path / "main", "\tfsmonitor = tools/wt\n")
+    tree = _worktree(main, tmp_path / "w")
+    assert refusal(tree / "tools" / "wt.exe").startswith(REFUSAL_PREFIX)
+
+
+@pytest.mark.parametrize("where", [".gitconfig", ".config/git/config"])
+def test_a_global_hooks_folder_is_protected_in_every_repository(tmp_path, where) -> None:
+    config = tmp_path / "user" / where
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text("[core]\n\thooksPath = .githooks\n", encoding="utf-8")
+    repo = _repo(tmp_path / "repo", "")
+    assert refusal(repo / ".githooks" / "pre-commit").startswith(REFUSAL_PREFIX)
+    assert refusal(repo / "tools" / "other.sh") == ""
 
 
 def test_off_windows_without_git_the_mac_rule_is_unchanged(tmp_path, monkeypatch) -> None:
