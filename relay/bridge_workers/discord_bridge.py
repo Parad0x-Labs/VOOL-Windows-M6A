@@ -50,24 +50,50 @@ def _owner_file() -> Path:
     return home / "config" / "discord_bridge.json"
 
 
+#: FILE_ATTRIBUTE_REPARSE_POINT: a junction, a symlink or another reparse point on Windows.
+_REPARSE_POINT = 0x400
+
+
+def _linked(info: os.stat_result) -> bool:
+    return stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & _REPARSE_POINT)
+
+
 def _something_unreadable_in_place(path: Path) -> bool:
-    """Windows: whether a "not found" for the owner file hides something VOOL cannot read. A dangling
-    link at the path stats as not found, and so does a file where a folder above it should be (Windows
-    reports ERROR_PATH_NOT_FOUND, not ENOTDIR). Either one refuses everyone rather than pairing."""
+    r"""Windows: whether the owner file's place holds something VOOL must not trust, judged before the
+    file is read. Every unknown refuses everyone instead of pairing the first speaker:
+    - config\ (the folder holding the file) that is a link, a junction or any reparse point, even one
+      that resolves, or that is not a real folder;
+    - an owner file that is a link or a reparse point, or not a regular file;
+    - a dangling link anywhere above (it stats as not found), or a file where a folder above should be
+      (Windows reports that as ERROR_PATH_NOT_FOUND, not ENOTDIR).
+    Above config\, a folder is judged followed, so a home reached through a link to a folder pairs."""
     try:
-        os.lstat(path)
-        return True  # something is there (a dangling link), and it is not a readable owner file
+        info = os.lstat(path.parent)
     except FileNotFoundError:
-        pass
+        info = None
     except OSError:
         return True
-    # The nearest folder above that exists must be a folder. Followed, so a home reached through a
-    # link to a folder still counts as one.
-    for folder in path.parents:
+    if info is not None:
+        if _linked(info) or not stat.S_ISDIR(info.st_mode):
+            return True
+        try:
+            entry = os.lstat(path)
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return True
+        return _linked(entry) or not stat.S_ISREG(entry.st_mode)
+    for folder in path.parent.parents:
         try:
             info = os.stat(folder)
         except FileNotFoundError:
-            continue
+            try:
+                os.lstat(folder)
+                return True  # a dangling link where a folder should be
+            except FileNotFoundError:
+                continue
+            except OSError:
+                return True
         except OSError:
             return True
         return not stat.S_ISDIR(info.st_mode)
@@ -97,13 +123,13 @@ class DiscordBridge:
         if _IS_WINDOWS:
             # Only a file that is really not there is "no owner yet" (first use pairs). Path.exists()
             # answers False for a symlink loop or a folder in the way and raises on access denied;
-            # each of those is an owner file VOOL cannot read, which refuses everyone instead.
+            # each of those, and a linked config folder or owner file, refuses everyone instead.
+            if _something_unreadable_in_place(path):
+                print(f"[DiscordBridge] Owner file {path} is unreadable; refusing every Discord user.")
+                return _OWNER_UNREADABLE
             try:
                 os.stat(path)
             except FileNotFoundError:
-                if _something_unreadable_in_place(path):
-                    print(f"[DiscordBridge] Owner file {path} is unreadable; refusing every Discord user.")
-                    return _OWNER_UNREADABLE
                 return None
             except OSError:
                 print(f"[DiscordBridge] Owner file {path} is unreadable; refusing every Discord user.")
