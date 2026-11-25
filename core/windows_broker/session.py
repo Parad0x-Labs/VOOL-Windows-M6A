@@ -38,6 +38,20 @@ def wired() -> bool:
     return _host is not None
 
 
+def reported_folders() -> list[str]:
+    """The flagged folders the broker reported at its start, as reported, without asking it anything.
+
+    For checks that only ever refuse more (core.git_metadata_protection's marked-folder repositories):
+    a stale entry there can only protect a file, never open one. The gate itself uses checked_folders."""
+    host = _host
+    if host is None:
+        return []
+    status = host.status
+    if not status.running or not status.flagged:
+        return []
+    return [folder.path for folder in status.flagged]
+
+
 def _client_for(status: BrokerStatus, secret: bytes) -> Any:
     return BrokerClient(status.pipe, secret, status.pid)
 
@@ -121,4 +135,4 @@ def report() -> dict[str, Any]:
     }
 
 
-__all__ = ["checked_folders", "register", "report", "wired"]
+__all__ = ["checked_folders", "register", "report", "reported_folders", "wired"]

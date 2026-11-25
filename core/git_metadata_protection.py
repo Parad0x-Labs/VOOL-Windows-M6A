@@ -240,7 +240,7 @@ def _protected_target(named: Path, top: Path) -> bool:
             return True
     from core import windows_write_gate
 
-    return windows_write_gate.inside_flagged(str(named))
+    return windows_write_gate.inside_known(str(named))  # never asks the broker
 
 
 def _global_config_files() -> list[Path]:
@@ -336,7 +336,7 @@ _WINDOWS_PROGRAM_SUFFIXES = (".com", ".exe", ".bat", ".cmd")
 def _program_spellings(named: Path) -> list[Path]:
     """The files Windows may run for a command word: as written and, for a word without a suffix, with each
     PATHEXT suffix (CreateProcess and Git for Windows' sh add them)."""
-    if named.suffix:
+    if named.suffix or not named.name:  # a word like "\\" can name a drive root, which has no name to add to
         return [named]
     suffixes = {suffix.casefold() for suffix in _WINDOWS_PROGRAM_SUFFIXES}
     suffixes.update(part.strip().casefold() for part in os.environ.get("PATHEXT", "").split(";")
@@ -483,7 +483,7 @@ def _marked_repositories_refusal(candidate: Path, forms: list[Path], checked: se
     if not safe_git.git_refused_here():
         return ""
     try:
-        roots = windows_write_gate.flagged_roots()
+        roots = windows_write_gate.known_roots()  # never asks the broker
     except Exception:  # an unknown state flags nothing, and nothing is written there either
         return ""
     for root in roots:
