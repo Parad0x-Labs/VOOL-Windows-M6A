@@ -132,6 +132,14 @@ def test_a_quoted_semicolon_stays_part_of_the_value(tmp_path) -> None:
     assert refusal(repo / "tools" / "a;b.sh").startswith(REFUSAL_PREFIX)
 
 
+@pytest.mark.parametrize("value", ['"my tools/x.sh" --watch', "sh 'my tools/x.sh'", '"\\"my tools/x.sh\\""'])
+def test_a_quoted_script_path_with_a_space_is_protected_whole(tmp_path, value) -> None:
+    repo = _repo(tmp_path / "repo", f"\tfsmonitor = {value}\n")
+    (repo / "my tools").mkdir()
+    assert refusal(repo / "my tools" / "x.sh").startswith(REFUSAL_PREFIX)
+    assert refusal(repo / "my tools" / "y.sh") == ""
+
+
 @pytest.mark.parametrize("suffix", ["", ".exe", ".cmd", ".bat", ".com"])
 def test_a_command_word_without_a_suffix_protects_what_windows_would_run(tmp_path, suffix) -> None:
     repo = _repo(tmp_path / "repo", '[filter "x"]\n\tclean = ./tools/clean\n')

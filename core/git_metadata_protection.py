@@ -258,8 +258,8 @@ def _global_config_files() -> list[Path]:
 
 
 def _cut_comment(raw: str) -> str | None:
-    """A config value as git reads it: cut at the first `;` or `#` outside double quotes, quotes dropped, `\\x`
-    kept as written. None (refuse) for a value continued on the next line or a quote left open."""
+    """A config value as git reads it: cut at the first `;` or `#` outside double quotes; quotes and `\\x` are
+    kept as written for `_command_words`. None (refuse) for a value continued on the next line or a quote left open."""
     out: list[str] = []
     quoted = False
     index = 0
@@ -273,6 +273,7 @@ def _cut_comment(raw: str) -> str | None:
             continue
         if char == '"':
             quoted = not quoted
+            out.append(char)  # kept, so the words below keep a quoted path with spaces whole
         elif char in ";#" and not quoted:
             break
         else:
@@ -282,6 +283,51 @@ def _cut_comment(raw: str) -> str | None:
         if quoted:
             return None
     return "".join(out).strip()
+
+
+def _git_value(kept: str) -> str:
+    """The value git hands the command: its own double quotes dropped and `\\"`, `\\\\`, `\\t`, `\\n` unescaped."""
+    out: list[str] = []
+    index = 0
+    while index < len(kept):
+        char = kept[index]
+        if char == "\\" and index + 1 < len(kept):
+            following = kept[index + 1]
+            out.append({"t": "\t", "n": "\n", "b": "\b"}.get(following, following))
+            index += 2
+            continue
+        if char != '"':
+            out.append(char)
+        index += 1
+    return "".join(out)
+
+
+def _command_words(value: str) -> list[str]:
+    """Each word a command line may run: quote-aware words ("C:/my tools/x.sh" stays one), and also the words of a
+    plain split at quotes and spaces, so a quoting form not read here still protects more, never less."""
+    words: list[str] = []
+    current: list[str] = []
+    quote = ""
+    started = False
+    for char in value:
+        if quote:
+            if char == quote:
+                quote = ""
+            else:
+                current.append(char)
+        elif char in "\"'":
+            quote, started = char, True
+        elif char.isspace():
+            if started:
+                words.append("".join(current))
+            current, started = [], False
+        else:
+            current.append(char)
+            started = True
+    if started:
+        words.append("".join(current))
+    plain = value.replace('"', " ").replace("'", " ").split()
+    return [*words, *(word for word in plain if word not in words)]
 
 
 _WINDOWS_PROGRAM_SUFFIXES = (".com", ".exe", ".bat", ".cmd")
@@ -361,7 +407,7 @@ def _local_targets(top: Path) -> tuple[list[Path], list[Path]] | None:
                 named = Path(value).expanduser()
                 hooks.append(named if named.is_absolute() else top / named)
             elif _runs_a_program(key):
-                for token in value.replace('"', " ").replace("'", " ").split():
+                for token in dict.fromkeys([*_command_words(value), *_command_words(_git_value(value))]):
                     token = token.lstrip("!")
                     if not token or token.startswith(("-", "#", ";")):
                         continue
