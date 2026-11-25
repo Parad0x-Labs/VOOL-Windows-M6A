@@ -196,13 +196,116 @@ def _redirect_targets(top: Path) -> tuple[list[Path], list[Path]] | None:
     return result
 
 
+def _local_config_file(top: Path) -> Path | None:
+    """The repository's own config file (found without git); None when the `.git` pointer cannot be read."""
+    entry = top / ".git"
+    try:
+        if entry.is_file():
+            pointer = entry.read_text(encoding="utf-8", errors="replace").strip()
+            if not pointer.lower().startswith("gitdir:"):
+                return None
+            gitdir = Path(pointer.split(":", 1)[1].strip())
+            return (gitdir if gitdir.is_absolute() else top / gitdir) / "config"
+        return entry / "config"
+    except OSError:
+        return None
+
+
+_SECTION = re.compile(r'^\[\s*([A-Za-z0-9.-]+)(?:\s+"((?:[^"\\]|\\.)*)")?\s*\]\s*(.*)$')
+_ENTRY = re.compile(r"^([A-Za-z][A-Za-z0-9-]*)\s*(?:=\s*(.*))?$")
+_MAX_INCLUDES = 16
+
+
+def _in_tree(named: Path, top: Path) -> bool:
+    with contextlib.suppress(OSError, ValueError):
+        return named.resolve() == top.resolve() or top.resolve() in named.resolve().parents
+    return False
+
+
+def _local_targets(top: Path) -> tuple[list[Path], list[Path]] | None:
+    """Windows port: (hooks folders, files) as `_redirect_targets` gives them, read from the repository's own config.
+
+    git does not run on Windows (core.safe_git refuses it), so git cannot list them. This reads the local config and
+    every file it includes (an includeIf is followed whatever its condition, so more is protected, never less), split
+    the way git's parser splits section, subsection and key: core.hooksPath, include paths, and each word of a program
+    setting's command line, as `_redirect_targets` takes them. None (refuse) when a file cannot be read, a line cannot
+    be placed, or includes go deeper than _MAX_INCLUDES."""
+    first = _local_config_file(top)
+    if first is None:
+        return None
+    hooks: list[Path] = []
+    files: list[Path] = []
+    queue, seen = [first], set()
+    while queue:
+        config = queue.pop()
+        if len(seen) >= _MAX_INCLUDES:
+            return None
+        key_seen = str(config.resolve()) if config.exists() else str(config)
+        if key_seen in seen:
+            continue
+        seen.add(key_seen)
+        files.append(config)
+        try:
+            text = config.read_text(encoding="utf-8", errors="replace") if config.exists() else ""
+        except OSError:
+            return None
+        section = ""
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line or line[0] in "#;":
+                continue
+            match = _SECTION.match(line)
+            if match:
+                name, sub, rest = match.group(1), match.group(2), match.group(3).strip()
+                section = (name.casefold() + "." + sub.replace('\\"', '"')) if sub is not None else name.casefold()
+                if not rest or rest[0] in "#;":
+                    continue
+                line = rest
+            entry = _ENTRY.match(line)
+            if entry is None or not section:
+                return None
+            value = (entry.group(2) or "").strip()
+            if value.endswith("\\"):
+                return None  # a value continued on the next line: not placed here, refuse
+            if len(value) >= 2 and value[0] == value[-1] == '"':
+                value = value[1:-1]
+            key = (section + "." + entry.group(1)).casefold()
+            if not value:
+                continue
+            if key == "include.path" or (key.startswith("includeif.") and key.endswith(".path")):
+                named = Path(value).expanduser()
+                queue.append(named if named.is_absolute() else config.parent / named)
+            elif key == "core.hookspath":
+                named = Path(value).expanduser()
+                hooks.append(named if named.is_absolute() else top / named)
+            elif _runs_a_program(key):
+                for token in value.replace('"', " ").replace("'", " ").split():
+                    token = token.lstrip("!")
+                    if not token or token.startswith(("-", "#", ";")):
+                        continue
+                    named = Path(token).expanduser()
+                    named = named if named.is_absolute() else top / named
+                    if _in_tree(named, top):
+                        files.append(named)
+    return hooks, files
+
+
 def _redirect_refusal(candidate: Path, forms: list[Path], top: Path) -> str:
     targets = _redirect_targets(top)
     if targets is None:
         if _local_config_names_redirect(top):
             return (f"{REFUSAL_PREFIX}: git could not say where the repository at `{top}` keeps its hooks and included "
                     f"settings, and its configuration names them, so `{candidate}` was not written; nothing was touched.")
-        return ""
+        from core import safe_git
+
+        if not safe_git.git_refused_here():
+            return ""
+        # Windows port: git never runs here, so a script that a program setting in the repository's own config
+        # names (core.fsmonitor, a filter, core.gitProxy, ...) would go unprotected. VOOL reads that config itself.
+        targets = _local_targets(top)
+        if targets is None:
+            return (f"{REFUSAL_PREFIX}: VOOL could not read the settings of the repository at `{top}`, so "
+                    f"`{candidate}` was not written; nothing was touched.")
     hooks, files = targets
     for target in forms:
         for folder in hooks:
