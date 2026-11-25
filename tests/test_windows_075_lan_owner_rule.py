@@ -141,3 +141,47 @@ def test_sabotage_through_the_proxy_the_callback_never_reaches_the_runtime(runti
     monkeypatch.setattr(handler, "_LOOPBACK_OPENER", urllib.request.build_opener())
     assert handler._post_callback("the-code", "the-state") is False
     assert runtime_callback == []
+
+
+def _place(kind: str, monkeypatch) -> None:
+    """An owner file VOOL cannot read: broken JSON, a link loop, access denied on its status, or a file
+    where config/ should be. The loop and the denial are the errors Windows gives, raised for that one
+    path, so the row needs no symlink privilege."""
+    import errno
+    import os
+
+    path = dbr._owner_file()
+    if kind in ("link loop", "access denied"):
+        code = errno.ELOOP if kind == "link loop" else errno.EACCES
+        real_stat = os.stat
+
+        def stat(target, *args, **kwargs):
+            if Path(target) == path:
+                raise OSError(code, os.strerror(code), str(target))
+            return real_stat(target, *args, **kwargs)
+
+        monkeypatch.setattr(dbr.os, "stat", stat)
+        return
+    if kind == "folder in the way":
+        path.parent.parent.mkdir(parents=True)
+        path.parent.write_text("not a folder\n", encoding="utf-8")
+        return
+    path.parent.mkdir(parents=True)
+    path.write_text("{not json", encoding="utf-8")
+
+
+@pytest.mark.parametrize("kind", ["broken json", "link loop", "access denied", "folder in the way"])
+def test_on_windows_an_owner_file_that_cannot_be_read_refuses_everyone(windows, home, kind, monkeypatch) -> None:
+    """Chief of Staff, 25 Nov: only a file that is not there pairs the first speaker."""
+    _place(kind, monkeypatch)
+    bridge = dbr.DiscordBridge()
+    assert bridge.owner_user_id is dbr._OWNER_UNREADABLE
+    assert bridge._authorize("222") is False
+    assert bridge._authorize("111") is False
+
+
+def test_on_windows_no_owner_file_at_all_still_pairs_the_first_user(windows, home) -> None:
+    bridge = dbr.DiscordBridge()
+    assert bridge.owner_user_id is None
+    assert bridge._authorize("111") is True
+    assert bridge._authorize("222") is False
