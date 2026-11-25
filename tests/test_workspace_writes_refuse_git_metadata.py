@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from core import windows_write_gate
 from core.execution.workspace_tools import _extract_patch_paths, apply_unified_diff_workspace
 from core.git_metadata_protection import refusal
 from core.machine_file_ops import move_path
@@ -36,8 +37,11 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 @pytest.fixture()
-def repo(tmp_path_factory) -> Path:
+def repo(tmp_path_factory, monkeypatch) -> Path:
     root = tmp_path_factory.mktemp("gitmeta").resolve()
+    if windows_write_gate._IS_WINDOWS:
+        # Windows port: file tools write only inside a marked disposable folder, so mark this repository.
+        monkeypatch.setenv(windows_write_gate.ENV_VAR, str(root))
     _git(root, "init", "-q")
     (root / "f.txt").write_text("one\n", encoding="utf-8")
     (root / "h.sh").write_text(f"#!/bin/sh\ntouch \"$(git rev-parse --show-toplevel)/{MARK}\"\n", encoding="utf-8")
@@ -45,11 +49,14 @@ def repo(tmp_path_factory) -> Path:
 
 
 def _snapshot(root: Path) -> dict[str, bytes]:
-    return {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
+    # Windows port: as_posix, so the ".git/" filters below match on Windows too.
+    return {p.relative_to(root).as_posix(): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
 
 
 def _apply(root: Path, patch: str) -> dict:
-    return apply_unified_diff_workspace({"patch": patch.rstrip("\n") + NO_EOL}, workspace_root=root, session_id="t")
+    # Windows port: VOOL's Windows engine refuses a patch that changes a file's last newline, so keep it there.
+    end = "\n" if windows_write_gate._IS_WINDOWS else NO_EOL
+    return apply_unified_diff_workspace({"patch": patch.rstrip("\n") + end}, workspace_root=root, session_id="t")
 
 
 def test_a_patch_to_git_config_is_refused_and_git_status_runs_nothing(repo) -> None:
