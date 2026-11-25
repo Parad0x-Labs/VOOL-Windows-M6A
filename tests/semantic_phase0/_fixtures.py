@@ -21,6 +21,7 @@ all the shipped code.
 """
 from __future__ import annotations
 
+import copy
 import os
 from unittest.mock import Mock
 
@@ -258,7 +259,35 @@ def pin_volatile_machine_observations():
         return [dict(row) for row in snapshot]
 
     machine_diagnostics.disk_usage = _pinned
+
+    # The machine-wide name searches are a second drifting observation of the same kind. Each walks
+    # the drive roots under a wall-clock budget (`_FIND_FOLDER_TIME_BUDGET_S`, 10 s), so whether the
+    # reply carries "The search hit its time limit ..." depends on how fast the runner's filesystem
+    # walk was at that moment, and what it finds depends on what the suite has written meanwhile.
+    # The first answer for each set of arguments is served to every later run: the turn still
+    # routes through the real tool and the real renderer, only the walk of the outside world is held.
+    from core import runtime_execution_tools as tools
+
+    searches = ("_machine_find_folder", "_machine_find_file", "_machine_find_largest")
+    originals = {name: getattr(tools, name) for name in searches}
+    seen: dict[tuple[str, str], object] = {}
+
+    def _first_answer(name):
+        real = originals[name]
+
+        def _pinned_search(arguments, *args, **kwargs):
+            key = (name, repr(sorted((arguments or {}).items())))
+            if key not in seen:
+                seen[key] = real(arguments, *args, **kwargs)
+            return copy.deepcopy(seen[key])
+
+        return _pinned_search
+
+    for name in searches:
+        setattr(tools, name, _first_answer(name))
     try:
         yield
     finally:
         machine_diagnostics.disk_usage = original
+        for name, real in originals.items():
+            setattr(tools, name, real)
