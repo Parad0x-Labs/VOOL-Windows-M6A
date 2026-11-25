@@ -1,4 +1,4 @@
-"""SERVED: on Windows the chat card for a transfer request carries its own Reject (0.7.3 Steve finding).
+"""SERVED: on Windows the chat card for a transfer request carries its own Reject (Steve finding on 0.7.3, fixed in 0.7.5).
 
 Before this, turning a request down meant opening "Review transfer" and finding "Cancel request" in the sheet. The
 wallet status now says ``card_reject`` (true on Windows only) and the one card script draws a Reject beside Review.
@@ -167,12 +167,19 @@ def test_a_windows_card_still_approves_only_through_the_review_and_pin(served, b
         page.wait_for_timeout(500)
         assert "reject" not in posts
         sends = node.send_count()
+        # a wrong PIN approves nothing
+        page.locator("#vwSheetCredential").fill("000000" if PIN != "000000" else "111111")
+        with page.expect_response(lambda r: r.url == daemon.base_url + "/api/wallet/approve") as wrong:
+            page.locator("#vwSheetApprove").click()
+        assert wrong.value.status != 200
+        assert node.send_count() == sends
+        page.wait_for_function("!document.getElementById('vwSheetApprove').disabled", timeout=15_000)
         page.locator("#vwSheetCredential").fill(PIN)
         with page.expect_response(lambda r: r.url == daemon.base_url + "/api/wallet/approve"):
             page.locator("#vwSheetApprove").click()
         page.wait_for_function(f"document.querySelector('.vw-card[data-proposal=\"{pid}\"] .vw-transfer-label') !== null", timeout=30_000)
         assert node.send_count() == sends + 1
-        assert posts.count("approve") == 1 and "reject" not in posts
+        assert posts.count("approve") == 2 and "reject" not in posts
         assert card.locator(".vw-card-reject").count() == 0
         assert not errors, errors
     finally:
