@@ -1646,12 +1646,46 @@ function pilotCardFor(p){
   review.setAttribute('aria-label', 'review transfer details; opening the preview does not approve it');
   var result = el('div', 'vw-result');
   review.addEventListener('click', function(){ openSheet(p, controls, result, review); });
-  controls.appendChild(review); card.appendChild(controls); card.appendChild(result);
+  controls.appendChild(review);
+  if (lastStatus && lastStatus.card_reject === true) {
+    // Reject on the card itself (the status says when): the same /api/wallet/reject door the review sheet's
+    // "Cancel request" uses, with the same outcome text. It can only turn the request down; nothing here approves.
+    var reject = el('button', 'vw-btn vw-card-reject', WT('wallet.reject', 'Reject')); reject.type = 'button';
+    reject.setAttribute('aria-label', 'reject this transfer request; nothing is signed or sent');
+    reject.addEventListener('click', function(){
+      if (sheetOpen && sheetOpen.proposalId === p.proposal_id) { sheetOpen.focus(); return; }  // the open review owns the decision
+      reject.disabled = true; review.disabled = true;
+      cancelProposal(p, controls, result, function(){ reject.disabled = false; review.disabled = false; result.textContent = 'The cancel request did not complete.'; });
+    });
+    controls.appendChild(reject);
+  }
+  card.appendChild(controls); card.appendChild(result);
   // registering here (not only in placeCards) lets the Wallet panel open this same review sheet
   // for a proposal it just created, before the next poll places the transcript card
   pilotCards[p.proposal_id] = { controls: controls, result: result, resolving: false, opener: review };
   rendered[p.proposal_id] = true;
   return card;
+}
+// One way to turn a transfer request down, from the review sheet's "Cancel request" or the card's own Reject: the
+// reject door, then the card says what was true when it was cancelled. `before` runs once the door answers (the sheet
+// closes itself there); `failed` runs when the request did not complete.
+function cancelProposal(p, cardControls, cardResult, failed, before){
+  return postJson('/api/wallet/reject', { proposal_id: p.proposal_id }).then(function(res){
+    if (before) before();
+    if (res.ok) refreshStatus();  // one authoritative read now, so the open Wallet panel shows the outcome without waiting for the poll
+    var data = res.data || {};
+    if (res.ok && (data.cancelled === true || data.transfer)) delete pilotCards[p.proposal_id];
+    if (res.ok && data.cancelled === true) {
+      cardControls.remove();
+      var t = data.transfer || null;
+      // the copy follows what was true when the request was cancelled: nothing signed, or signed and never sent
+      cardResult.textContent = (t && t.state !== 'cancelled') ? 'Cancel requested. Nothing will be sent.' : (t && t.state_label && data.reason !== 'rejected_before_claim' ? 'Cancelled. Nothing was sent.' : 'Cancelled. Nothing was signed or sent.');
+      if (t) { transferCards[p.proposal_id] = cardResult; cardResult.setAttribute('data-transfer-state', t.state || ''); markAsked(cardResult, statusAsked); }
+    } else if (res.ok && data.transfer) {
+      cardControls.remove(); renderTransfer(cardResult, data.transfer); transferCards[p.proposal_id] = cardResult;
+      cardResult.setAttribute('data-transfer-state', data.transfer.state || ''); markAsked(cardResult, statusAsked);
+    } else cardResult.textContent = (data.message || data.error) || 'The request could not be cancelled.';
+  }).catch(function(){ failed(); });
 }
 function openSheet(p, cardControls, cardResult, opener){
   if (sheetOpen) { sheetOpen.focus(); return; }
@@ -1873,22 +1907,7 @@ function openSheet(p, cardControls, cardResult, opener){
   cancel.addEventListener('click', function(){
     decisionStarted = true; gate();
     cancel.disabled = true;
-    postJson('/api/wallet/reject', { proposal_id: p.proposal_id }).then(function(res){
-      close();
-      if (res.ok) refreshStatus();  // one authoritative read now, so the open Wallet panel shows the outcome without waiting for the poll
-      var data = res.data || {};
-      if (res.ok && (data.cancelled === true || data.transfer)) delete pilotCards[p.proposal_id];
-      if (res.ok && data.cancelled === true) {
-        cardControls.remove();
-        var t = data.transfer || null;
-        // the copy follows what was true when the request was cancelled: nothing signed, or signed and never sent
-        cardResult.textContent = (t && t.state !== 'cancelled') ? 'Cancel requested. Nothing will be sent.' : (t && t.state_label && data.reason !== 'rejected_before_claim' ? 'Cancelled. Nothing was sent.' : 'Cancelled. Nothing was signed or sent.');
-        if (t) { transferCards[p.proposal_id] = cardResult; cardResult.setAttribute('data-transfer-state', t.state || ''); markAsked(cardResult, statusAsked); }
-      } else if (res.ok && data.transfer) {
-        cardControls.remove(); renderTransfer(cardResult, data.transfer); transferCards[p.proposal_id] = cardResult;
-        cardResult.setAttribute('data-transfer-state', data.transfer.state || ''); markAsked(cardResult, statusAsked);
-      } else cardResult.textContent = (data.message || data.error) || 'The request could not be cancelled.';
-    }).catch(function(){ cancel.disabled = false; setState('The cancel request did not complete.', true); });
+    cancelProposal(p, cardControls, cardResult, function(){ cancel.disabled = false; setState('The cancel request did not complete.', true); }, close);
   });
   document.addEventListener('keydown', onKey, true);
   var timer = setInterval(gate, 1000);

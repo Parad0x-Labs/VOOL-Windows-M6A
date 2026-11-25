@@ -3,6 +3,7 @@ per-account views, limits, pending approvals and the last receipt. Never a key, 
 a PIN, or a card number."""
 from __future__ import annotations
 
+import sys
 import time
 from typing import Any
 
@@ -158,6 +159,10 @@ def wallet_status() -> dict[str, Any]:
         "signing_preference": custody.preferred_signing_mode(), "public_key": "", "label": "", "pending_approvals": 0, "pending": [],
         "last_receipt": None, "limits": {}, "x402_cap_minor": config.x402_cap_minor(), "generated_at_epoch": time.time(),
         "soft_warnings": [dict(item) for item in SOFT_WARNINGS],
+        # Windows: the chat card for a transfer request carries its own Reject, so turning a request down never needs
+        # the review sheet. The script is the same on every host; this flag decides. Approval still goes only through
+        # the review sheet and the credential.
+        "card_reject": sys.platform == "win32",
     }
     if not enabled:
         # Off is a permission fact, never an existence fact: a wallet that exists stays visible as
