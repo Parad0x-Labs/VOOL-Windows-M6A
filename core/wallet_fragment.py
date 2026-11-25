@@ -111,7 +111,8 @@ _WALLET_CSS = """
 .vw-copy{font:inherit;font-size:11px;padding:1px 6px;border:1px solid var(--border,#262b35);border-radius:6px;background:transparent;color:var(--muted,#9aa1af);cursor:pointer;margin-left:6px;vertical-align:1px}
 .vw-sheet-note{font-size:12px;margin:6px 0;color:#fbbf24}
 .vw-sheet-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px}
-div.vw-review{margin:4px 0 8px}
+.vw-review{margin:4px 0 8px}
+.vw-review + .vw-card-reject{margin:4px 0 8px 6px}
 .vw-review-line{font-size:13px;margin:4px 0;line-height:1.35}
 .vw-review-line.primary{font-size:14.5px;font-weight:600}
 .vw-review-line.muted{color:var(--muted,#9aa1af);font-size:12.5px}
