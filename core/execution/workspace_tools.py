@@ -382,9 +382,11 @@ def apply_unified_diff_workspace(
         try:
             resolve_workspace_path(relative, workspace_root=workspace_root, write=True)
         except ValueError as exc:
-            if git_metadata_protection.REFUSAL_PREFIX not in str(exc):
-                # Port: any other refused path (outside the workspace, VOOL's own state) is refused below,
-                # still before any engine runs, as invalid_arguments with "Nothing was written".
+            if (windows_write_gate.active() and reviewed_destinations is None
+                    and git_metadata_protection.REFUSAL_PREFIX not in str(exc)):
+                # Windows port: any other refused path (outside the workspace, VOOL's own state) is refused
+                # below, still before any engine runs, as invalid_arguments with "Nothing was written". Off
+                # Windows, and for a reviewed code-task patch, Mac 0.7.5's early refusal stands.
                 continue
             return {
                 "ok": False,
