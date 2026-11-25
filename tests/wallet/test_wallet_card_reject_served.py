@@ -1,17 +1,18 @@
 """SERVED: on Windows the chat card for a transfer request carries its own Reject (Steve finding on 0.7.3, fixed in 0.7.5).
 
 Before this, turning a request down meant opening "Review transfer" and finding "Cancel request" in the sheet. The
-wallet status now says ``card_reject`` (true on Windows only) and the one card script draws a Reject beside Review.
+wallet status now says ``card_reject: true`` (on Windows only; other hosts never get the key) and the one card script draws a Reject beside Review.
 Reject uses the same reject door as the sheet's Cancel and ends the request with nothing signed or sent; it never
 quotes or approves. Approval still goes only through the review sheet and the PIN. Off Windows the card is unchanged.
 
-SCRIPTED MODEL, SIMULATED CHAIN (Solana Devnet node), real daemon, the confined browser. This Linux daemon reports
-``card_reject: false``, so the Windows answer is the daemon's own status with that one field set, as a Windows
+SCRIPTED MODEL, SIMULATED CHAIN (Solana Devnet node), real daemon, the confined browser. This Linux daemon sends no
+``card_reject``, so the Windows answer is the daemon's own status with that one field set, as a Windows
 daemon sends it.
 """
 from __future__ import annotations
 
 import json
+import re
 import sys
 import uuid
 from urllib.error import HTTPError
@@ -113,7 +114,7 @@ def _open_chat(daemon, browser, *, windows: bool):
     def as_windows(route):
         response = route.fetch()
         body = response.json()
-        assert body["status"]["card_reject"] is (sys.platform == "win32")
+        assert body["status"].get("card_reject") is (True if sys.platform == "win32" else None)
         body["status"]["card_reject"] = True
         route.fulfill(response=response, body=json.dumps(body))
 
@@ -191,7 +192,7 @@ def test_off_windows_the_card_is_unchanged(served, browser):
     daemon, _node, _provider = served
     pid = _chat_proposal(daemon, f"Send 0.0006 SOL on solana to {_sol_key()} for reject three", session="reject-3")
     with urlopen(daemon.base_url + "/api/wallet/status", timeout=30) as response:
-        assert json.load(response)["status"]["card_reject"] is (sys.platform == "win32")
+        assert json.load(response)["status"].get("card_reject") is (True if sys.platform == "win32" else None)
     if sys.platform == "win32":
         pytest.skip("this daemon is a Windows host")
     page, errors, _posts = _open_chat(daemon, browser, windows=False)
@@ -204,3 +205,26 @@ def test_off_windows_the_card_is_unchanged(served, browser):
     finally:
         page.unroute_all(behavior="ignoreErrors")
         page.close()
+
+
+@pytest.mark.parametrize("platform", ["win32", "darwin", "linux"])
+def test_only_windows_status_carries_the_card_reject_key(platform, monkeypatch):
+    """Windows-only fix: off Windows the status has exactly the keys it had before, with no card_reject at all."""
+    from core.wallet import status as wallet_status_module
+
+    monkeypatch.setattr(wallet_status_module.sys, "platform", platform)
+    status = wallet_status_module.wallet_status()
+    if platform == "win32":
+        assert status["card_reject"] is True
+    else:
+        assert "card_reject" not in status
+
+
+def test_the_shared_card_css_is_unchanged_and_only_the_windows_pair_is_spaced():
+    """Review keeps its own margin on every host; the one new rule needs a Reject beside it, drawn only on Windows."""
+    from core.wallet_fragment import render_wallet_fragment
+
+    css = re.match(r"<style>(.*?)</style>", render_wallet_fragment(), re.DOTALL).group(1)
+    assert ".vw-review{margin:4px 0 8px}" in css.splitlines()
+    assert "div.vw-review" not in css
+    assert [line for line in css.splitlines() if "vw-card-reject" in line] == [".vw-review + .vw-card-reject{margin:4px 0 8px 6px}"]
