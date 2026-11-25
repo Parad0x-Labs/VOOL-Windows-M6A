@@ -161,6 +161,18 @@ def test_a_marker_that_is_a_folder_or_a_link_proves_nothing(tmp_path: Path) -> N
     assert pin.launcher_locations(root) == (_checkout_pair(root),)
 
 
+def test_the_repository_never_holds_the_install_marker() -> None:
+    """A checkout is never the install: no tracked .vool-install, and .gitignore keeps one out."""
+    import subprocess
+
+    root = Path(__file__).resolve().parents[2]
+    tracked = subprocess.run(["git", "ls-files", "--", f"*{pin.INSTALL_MARKER_NAME}"], cwd=root,
+                             capture_output=True, text=True, check=True).stdout
+    assert tracked.strip() == ""
+    ignored = subprocess.run(["git", "check-ignore", "-q", "--no-index", f"app/{pin.INSTALL_MARKER_NAME}"], cwd=root)
+    assert ignored.returncode == 0
+
+
 def test_a_relative_app_root_with_a_marker_still_never_probes_its_parent(tmp_path: Path, monkeypatch) -> None:
     _foreign_parent(tmp_path, "app")
     _mark_installed(tmp_path / "app")
