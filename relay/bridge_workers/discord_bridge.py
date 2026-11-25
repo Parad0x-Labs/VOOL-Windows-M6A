@@ -30,11 +30,21 @@ from core.channel_gateway import ChannelRequest, process_channel_request
 from relay.channel_outbound import TOPIC_BY_PLATFORM
 
 REFUSAL_TEXT = "Not authorized. This VOOL is locked to its owner."
+#: Windows only (Jesse, 16 Nov: Windows-only fixes by default). On Windows the owner file follows the
+#: runtime's own home, is read and replaced through the sharing-violation retry, and is written
+#: owner-only. Off Windows the bridge keeps the Mac behaviour. Patched by tests.
+_IS_WINDOWS: bool = os.name == "nt"
 #: The owner file is present but unreadable: refuse everyone instead of pairing someone new.
 _OWNER_UNREADABLE = object()
 
 
 def _owner_file() -> Path:
+    if _IS_WINDOWS:
+        # The home the runtime itself uses: VOOL_HOME (or the legacy NULLA_HOME) when set, else the
+        # installed home under %LOCALAPPDATA%, never a second ~/.vool_runtime the app does not read.
+        from core.runtime_paths import active_vool_home
+
+        return active_vool_home() / "config" / "discord_bridge.json"
     home = Path(os.environ.get("VOOL_HOME") or (Path.home() / ".vool_runtime"))
     return home / "config" / "discord_bridge.json"
 
@@ -62,7 +72,15 @@ class DiscordBridge:
         if not path.exists():
             return None
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            if _IS_WINDOWS:
+                # A reader is refused for a moment while an antivirus scan or the indexer holds the
+                # file; without the retry one such moment would refuse every Discord user this run.
+                from core import windows_sharing_retry
+
+                text = windows_sharing_retry.read_text(path)
+            else:
+                text = path.read_text(encoding="utf-8")
+            data = json.loads(text)
             owner = str(data.get("owner_user_id") or "").strip() if isinstance(data, dict) else ""
         except (OSError, ValueError):
             owner = ""
@@ -74,6 +92,13 @@ class DiscordBridge:
     def _save_owner(self, user_id: str) -> None:
         path = _owner_file()
         try:
+            if _IS_WINDOWS:
+                # Owner-only, with the replace retried past a sharing violation: a lost save means a
+                # restart pairs whoever speaks first, and another account must not rewrite the owner.
+                from core.owner_only import write_private_file
+
+                write_private_file(path, json.dumps({"owner_user_id": str(user_id)}))
+                return
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_name(path.name + ".tmp")
             tmp.write_text(json.dumps({"owner_user_id": str(user_id)}), encoding="utf-8")

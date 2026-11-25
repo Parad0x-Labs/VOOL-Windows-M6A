@@ -25,9 +25,13 @@ import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 _API_CALLBACK_URL = "http://127.0.0.1:11435/api/auth/openrouter/callback"
+#: No proxy. urllib otherwise sends this 127.0.0.1 call to the proxy in HTTP_PROXY or the Windows
+#: Internet settings; the runtime then sees the proxy as the peer, not loopback, and refuses the
+#: callback as not the owner's local session (core.request_trust), so the sign-in never completes.
+_LOOPBACK_OPENER = build_opener(ProxyHandler({}))
 _RETRY_COUNT = 30
 _RETRY_DELAY_SECONDS = 1.0
 _MAX_CODE_LENGTH = 4096
@@ -86,7 +90,7 @@ def _post_callback(code: str, state: str) -> bool:
         method="POST",
     )
     try:
-        with urlopen(request, timeout=2) as response:
+        with _LOOPBACK_OPENER.open(request, timeout=2) as response:
             return 200 <= int(response.status) < 300
     except (HTTPError, OSError, URLError, ValueError):
         return False
