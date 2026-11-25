@@ -401,10 +401,10 @@ def _local_targets(top: Path) -> tuple[list[Path], list[Path]] | None:
             if not value:
                 continue
             if key == "include.path" or (key.startswith("includeif.") and key.endswith(".path")):
-                named = Path(value).expanduser()
+                named = Path(_git_value(value)).expanduser()
                 queue.append(named if named.is_absolute() else config.parent / named)
             elif key == "core.hookspath":
-                named = Path(value).expanduser()
+                named = Path(_git_value(value)).expanduser()
                 hooks.append(named if named.is_absolute() else top / named)
             elif _runs_a_program(key):
                 for token in dict.fromkeys([*_command_words(value), *_command_words(_git_value(value))]):

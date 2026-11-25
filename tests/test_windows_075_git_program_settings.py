@@ -163,6 +163,23 @@ def test_a_global_hooks_folder_is_protected_in_every_repository(tmp_path, where)
     assert refusal(repo / "tools" / "other.sh") == ""
 
 
+@pytest.mark.parametrize("value", ['".githooks"', '".githooks" ; quoted'])
+def test_a_quoted_global_hooks_folder_is_still_protected(tmp_path, value) -> None:
+    config = tmp_path / "user" / ".gitconfig"
+    config.write_text(f"[core]\n\thooksPath = {value}\n", encoding="utf-8")
+    repo = _repo(tmp_path / "repo", "")
+    assert refusal(repo / ".githooks" / "pre-commit").startswith(REFUSAL_PREFIX)
+
+
+def test_a_quoted_global_include_path_is_still_followed(tmp_path) -> None:
+    extra = tmp_path / "user" / "extra settings.inc"
+    extra.write_text("[core]\n\tfsmonitor = tools/watch.sh\n", encoding="utf-8")
+    (tmp_path / "user" / ".gitconfig").write_text(f'[include]\n\tpath = "{extra.as_posix()}"\n', encoding="utf-8")
+    repo = _repo(tmp_path / "repo", "")
+    assert refusal(repo / "tools" / "watch.sh").startswith(REFUSAL_PREFIX)
+    assert refusal(repo / "tools" / "other.sh") == ""
+
+
 def test_off_windows_without_git_the_mac_rule_is_unchanged(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(safe_git, "_REFUSE_GIT", False)
     monkeypatch.setattr(git_metadata_protection.shutil, "which", lambda _name: None)
